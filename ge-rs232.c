@@ -1,5 +1,6 @@
 #include "ge-rs232.h"
 #include <strings.h>
+#include <stdio.h>
 
 const char *ge_rs232_text_token_lookup[256] = {
 	"0",
@@ -12,7 +13,7 @@ const char *ge_rs232_text_token_lookup[256] = {
 	"7",
 	"8",
 	"9",
-	"#",
+	[0x0c]="#",
 	":",
 	"/",
 	"?",
@@ -312,10 +313,16 @@ ge_rs232_receive_byte(ge_rs232_t self, uint8_t byte) {
 			self->nibble_buffer = byte;
 			goto bail;
 		}
-		uint8_t value = hex_digit_to_int(self->nibble_buffer)<<4+hex_digit_to_int(byte);
+		uint8_t value = (hex_digit_to_int(self->nibble_buffer)<<4)+hex_digit_to_int(byte);
+		self->nibble_buffer = 0;
 		if(self->message_len==255) {
 			if(value>GE_RS232_MAX_MESSAGE_SIZE) {
 				ret = GE_RS232_STATUS_MESSAGE_TOO_BIG;
+				self->reading_message = false;
+				goto bail;
+			}
+			if(value<2) {
+				ret = GE_RS232_STATUS_MESSAGE_TOO_SMALL;
 				self->reading_message = false;
 				goto bail;
 			}
@@ -329,6 +336,7 @@ ge_rs232_receive_byte(ge_rs232_t self, uint8_t byte) {
 				self->send_byte(self->context,GE_RS232_ACK,self);
 				ret = self->received_message(self->context,self->buffer,self->message_len-1,self);
 			} else {
+				fprintf(stderr,"[Bad checksum: calculated:0x%02X != indicated:0x%02X]\n",self->buffer_sum,value);
 				self->send_byte(self->context,GE_RS232_NAK,self);
 				ret = GE_RS232_STATUS_BAD_CHECKSUM;
 			}

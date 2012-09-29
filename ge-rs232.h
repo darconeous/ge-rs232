@@ -34,6 +34,7 @@ typedef struct ge_rs232_s* ge_rs232_t;
 #define GE_RS232_STATUS_MESSAGE_TOO_BIG		(-5)
 #define GE_RS232_STATUS_JUNK				(-6)
 #define GE_RS232_STATUS_BAD_CHECKSUM		(-7)
+#define GE_RS232_STATUS_MESSAGE_TOO_SMALL	(-8)
 
 #define GE_RS232_PTA_PANEL_TYPE				(0x01)
 #define GE_RS232_PTA_AUTOMATION_EVENT_LOST	(0x02)
