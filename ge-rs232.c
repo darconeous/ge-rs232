@@ -1,7 +1,7 @@
 #include "ge-rs232.h"
 #include <strings.h>
 
-const char ge_rs232_text_token_lookup[256] {
+const char *ge_rs232_text_token_lookup[256] = {
 	"0",
 	"1",
 	"2",
@@ -222,7 +222,7 @@ const char ge_rs232_text_token_lookup[256] {
 	[0xFB]="\n",	// Another Carriage Return?
 	[0xFD]="\b",	// Backspace...?
 	[0xFE]="[!]",	// Indicates that the next token should blink.
-}
+};
 
 /*
 struct ge_rs232_s {
@@ -314,7 +314,7 @@ ge_rs232_receive_byte(ge_rs232_t self, uint8_t byte) {
 		}
 		uint8_t value = hex_digit_to_int(self->nibble_buffer)<<4+hex_digit_to_int(byte);
 		if(self->message_len==255) {
-			if(value>GE_RS232_MAX_MESSAGE_LENGTH) {
+			if(value>GE_RS232_MAX_MESSAGE_SIZE) {
 				ret = GE_RS232_STATUS_MESSAGE_TOO_BIG;
 				self->reading_message = false;
 				goto bail;
@@ -360,12 +360,12 @@ ge_rs232_send_message(ge_rs232_t self, const uint8_t* data, uint8_t len) {
 	ge_rs232_status_t ret = GE_RS232_STATUS_OK;
 	uint8_t checksum = len+1;
 
-	if(len>GE_RS232_MAX_MESSAGE_LENGTH) {
+	if(len>GE_RS232_MAX_MESSAGE_SIZE) {
 		ret = GE_RS232_STATUS_MESSAGE_TOO_BIG;
 		goto bail;
 	}
 
-	ret = self->send_byte(self->context,GE_RS232_START_OF_LINE,self);
+	ret = self->send_byte(self->context,GE_RS232_START_OF_MESSAGE,self);
 	if(ret) goto bail;
 
 	// Checksum has the length+1, which is what we want to write out.

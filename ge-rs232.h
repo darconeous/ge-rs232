@@ -8,6 +8,8 @@
 #define GE_RS232_NAK				(0x15)
 #define GE_RS232_MAX_MESSAGE_SIZE	(56)
 
+typedef int ge_rs232_status_t;
+
 struct ge_rs232_s {
 	void* context;
 	bool reading_message;
@@ -23,7 +25,6 @@ struct ge_rs232_s {
 
 typedef struct ge_rs232_s* ge_rs232_t;
 
-typedef int ge_rs232_status_t;
 
 #define GE_RS232_STATUS_OK					(0)
 #define GE_RS232_STATUS_ERROR				(-1)
@@ -73,7 +74,7 @@ typedef int ge_rs232_status_t;
 #define GE_RS232_ATP_RESERVED2				(0x99)
 #define GE_RS232_ATP_RESERVED3				(0x98)
 
-extern const char ge_rs232_text_token_lookup[256];
+extern const char* ge_rs232_text_token_lookup[256];
 
 ge_rs232_t ge_rs232_init(ge_rs232_t interface);
 ge_rs232_status_t ge_rs232_receive_byte(ge_rs232_t interface, uint8_t byte);
