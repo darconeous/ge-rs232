@@ -14,6 +14,7 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 
 ge_rs232_status_t send_byte(void* context, uint8_t byte,struct ge_rs232_s* instance) {
 	fprintf(stdout,"%c",(char)byte);
+	fflush(stdout);
 	return GE_RS232_STATUS_OK;
 }
 
