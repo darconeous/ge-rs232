@@ -130,22 +130,22 @@ const char *ge_rs232_text_token_lookup[256] = {
 	"INTRUSION ",
 	"INVALID ",
 	"IS ",
-	"KEY ",
-	"KITCHEN ",
-	"LAUNDRY ",
-	"LEARN ",
-	"LEFT ",
-	"LIBRARY ",
-	"LEVEL ",
-	"LIIGHT ",
-	"LIGHTS ",
-	"LIVING ",
+	[0x81] = "KEY ",
+	[0x82] = "KITCHEN ",
+	[0x83] = "LAUNDRY ",
+	[0x84] = "LEARN ",
+	[0x85] = "LEFT ",
+	[0x86] = "LIBRARY ",
+	[0x87] = "LEVEL ",
+	[0x88] = "LIGHT ",
+	[0x89] = "LIGHTS ",
+	[0x8A] = "LIVING ",
 	"LOW ",
 	"MAIN ",
 	"MASTER ",
 	"MEDICAL"
 	"MEMORY ",
-	"MIN ",
+	[0x90] = "MIN ",
 	"MODE ",
 	"MOTION ",
 	"NIGHT ",
@@ -355,10 +355,13 @@ bail:
 ge_rs232_status_t
 ge_rs232_ready_to_send(ge_rs232_t self) {
 	ge_rs232_status_t ret = GE_RS232_STATUS_WAIT;
-	if(self->last_response == GE_RS232_NAK) {
+	time_t curr_time = time(&curr_time);
+	if(self->last_response == GE_RS232_ACK) {
+		ret = GE_RS232_STATUS_OK;
+	} else if(self->last_response == GE_RS232_NAK) {
 		ret = GE_RS232_STATUS_NAK;
-	} else if(self->last_response == GE_RS232_ACK) {
-		ret = GE_RS232_STATUS_WAIT;
+	} else if(curr_time-self->last_sent > 1) {
+		ret = GE_RS232_STATUS_TIMEOUT;
 	}
 	return ret;
 }
@@ -373,13 +376,15 @@ ge_rs232_send_message(ge_rs232_t self, const uint8_t* data, uint8_t len) {
 		goto bail;
 	}
 
+	self->last_response = 0;
+
 	ret = self->send_byte(self->context,GE_RS232_START_OF_MESSAGE,self);
 	if(ret) goto bail;
 
 	// Checksum has the length+1, which is what we want to write out.
-	ret = self->send_byte(self->context,int_to_hex_digit((checksum)>>4),self);
+	ret = self->send_byte(self->context,int_to_hex_digit(checksum>>4),self);
 	if(ret) goto bail;
-	ret = self->send_byte(self->context,int_to_hex_digit((checksum)),self);
+	ret = self->send_byte(self->context,int_to_hex_digit(checksum),self);
 	if(ret) goto bail;
 
 	// Write out the data.
@@ -392,12 +397,12 @@ ge_rs232_send_message(ge_rs232_t self, const uint8_t* data, uint8_t len) {
 	}
 
 	// Now write out the checksum.
-	ret = self->send_byte(self->context,int_to_hex_digit((checksum)>>4),self);
+	ret = self->send_byte(self->context,int_to_hex_digit(checksum>>4),self);
 	if(ret) goto bail;
-	ret = self->send_byte(self->context,int_to_hex_digit((checksum)),self);
+	ret = self->send_byte(self->context,int_to_hex_digit(checksum),self);
 	if(ret) goto bail;
 
-	self->last_response = 0;
+	self->last_sent = time(&self->last_sent);
 bail:
 	return ret;
 }

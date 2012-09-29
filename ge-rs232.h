@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
 
 #define GE_RS232_START_OF_MESSAGE	(0x0A)
 #define GE_RS232_ACK				(0x06)
@@ -18,6 +19,7 @@ struct ge_rs232_s {
 	uint8_t nibble_buffer;
 	uint8_t last_response;
 	uint8_t buffer_sum;
+	time_t last_sent;
 	uint8_t buffer[GE_RS232_MAX_MESSAGE_SIZE];
 	ge_rs232_status_t (*received_message)(void* context, const uint8_t* data, uint8_t len,struct ge_rs232_s* instance);
 	ge_rs232_status_t (*send_byte)(void* context, uint8_t byte,struct ge_rs232_s* instance);
