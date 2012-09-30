@@ -89,7 +89,17 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 				len-=5;
 				data+=5;
 				while(len--) {
-					fprintf(stderr,"%s",ge_rs232_text_token_lookup[*data++]);
+					const char* str = ge_rs232_text_token_lookup[*data++];
+					if(str) {
+						if(str[0]=='\n') {
+							if(len)
+								fprintf(stderr," | ");
+						} else {
+							fprintf(stderr,"%s",str);
+						}
+					} else {
+						fprintf(stderr,"\\x%02x",data[-1]);
+					}
 				}
 				len=0;
 				fprintf(stderr,"\"");
