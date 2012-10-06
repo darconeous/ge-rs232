@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "ge-rs232.h"
 #include <string.h>
+#include <stdlib.h>
 
 ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
 	uint8_t msg[] = {
@@ -119,7 +120,7 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_ZONE_DATA) {
 		fprintf(stderr,"[ZONE_INFO]");
 		int zone = (data[4]<<8)+data[5];
-		fprintf(stderr," PN:%d AREA:%d ZONE:%d TYPE:%d GROUP:%d STATUS:",data[1],data[2],zone,data[3]);
+		fprintf(stderr," PN:%d AREA:%d ZONE:%d TYPE:%d GROUP:%d STATUS:",data[1],data[2],zone,data[6],data[3]);
 		if(data[7]&GE_RS232_ZONE_STATUS_TRIPPED)
 			fprintf(stderr,"[TRIPPED]");
 		if(data[7]&GE_RS232_ZONE_STATUS_FAULT)
