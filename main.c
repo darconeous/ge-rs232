@@ -2,6 +2,111 @@
 #include "ge-rs232.h"
 #include <string.h>
 #include <stdlib.h>
+#include <smcp/smcp.h>
+#include <smcp/smcp-node.h>
+#include <smcp/smcp-pairing.h>
+#include <poll.h>
+
+#define GE_RS232_ZONE_TYPE_HARDWIRED	(0)
+#define GE_RS232_ZONE_TYPE_RF			(2)
+#define GE_RS232_ZONE_TYPE_TOUCHPAD		(3)
+#define GE_RS232_ZONE_TYPE_UNCONFIGURED	(255)
+
+#define GE_RS232_MAX_ZONES				(96)
+#define GE_RS232_MAX_PARTITIONS			(6)
+
+#define GE_RS232_ARMING_LEVEL_ZONE_TEST	(0)
+#define GE_RS232_ARMING_LEVEL_OFF		(1)
+#define GE_RS232_ARMING_LEVEL_STAY		(2)
+#define GE_RS232_ARMING_LEVEL_AWAY		(3)
+#define GE_RS232_ARMING_LEVEL_NIGHT		(4)
+#define GE_RS232_ARMING_LEVEL_SILENT	(5)
+#define GE_RS232_ARMING_LEVEL_PHONE_TEST (8)
+#define GE_RS232_ARMING_LEVEL_SENSOR_TEST (9)
+
+#define GE_RS232_ALARM_SOURCE_TYPE_BUS_DEVICE		(0)
+#define GE_RS232_ALARM_SOURCE_TYPE_LOCAL_PHONE		(1)
+#define GE_RS232_ALARM_SOURCE_TYPE_ZONE				(2)
+#define GE_RS232_ALARM_SOURCE_TYPE_SYSTEM			(3)
+#define GE_RS232_ALARM_SOURCE_TYPE_REMOTE_PHONE		(4)
+
+#define GE_RS232_ALARM_GENERAL_TYPE_ALARM			(1)
+#define GE_RS232_ALARM_GENERAL_TYPE_ALARM_CANCEL	(2)
+#define GE_RS232_ALARM_GENERAL_TYPE_ALARM_RESTORAL	(3)
+#define GE_RS232_ALARM_GENERAL_TYPE_FIRE_TROUBLE	(4)
+#define GE_RS232_ALARM_GENERAL_TYPE_FIRE_TROUBLE_RESTORAL	(5)
+#define GE_RS232_ALARM_GENERAL_TYPE_NONFIRE_TROUBLE	(6)
+#define GE_RS232_ALARM_GENERAL_TYPE_NONFIRE_TROUBLE_RESTORAL	(7)
+#define GE_RS232_ALARM_GENERAL_TYPE_BYPASS			(8)
+#define GE_RS232_ALARM_GENERAL_TYPE_UNBYPASS		(9)
+#define GE_RS232_ALARM_GENERAL_TYPE_OPENING			(10)
+#define GE_RS232_ALARM_GENERAL_TYPE_CLOSING			(11)
+#define GE_RS232_ALARM_GENERAL_TYPE_PARTITION_CONFIG_CHANGE			(12)
+#define GE_RS232_ALARM_GENERAL_TYPE_PARTITION_EVENT			(13)
+#define GE_RS232_ALARM_GENERAL_TYPE_PARTITION_TEST			(14)
+#define GE_RS232_ALARM_GENERAL_TYPE_SYSTEM_TROUBLE			(15)
+#define GE_RS232_ALARM_GENERAL_TYPE_SYSTEM_TROUBLE_RESTORAL			(16)
+#define GE_RS232_ALARM_GENERAL_TYPE_SYSTEM_CONFIG_CHANGE			(17)
+#define GE_RS232_ALARM_GENERAL_TYPE_SYSTEM_EVENT			(18)
+
+
+struct ge_zone_s {
+	struct smcp_variable_node_s node;
+
+	uint8_t partition;
+	uint8_t area;
+	uint8_t group;
+	uint16_t zone_number;
+	uint8_t type;
+	uint8_t status;
+
+	char label[16];
+	uint8_t label_len;
+};
+
+struct ge_partition_s {
+	uint8_t partition;
+	uint8_t area;
+	uint8_t arming_level;
+
+	uint16_t armed_by;
+	uint8_t feature_state;
+	uint16_t light_state;
+	
+	char label[16];
+	uint8_t label_len;
+
+	char touchpad_lcd[32];
+	uint8_t touchpad_lcd_len;
+};
+
+struct ge_alarm_s {
+	uint8_t partition;
+	uint8_t area;
+	uint8_t src_type;
+	uint32_t src_number;
+
+	uint8_t general_type;
+	uint8_t specific_type;
+	uint16_t data;
+};
+
+struct ge_system_state_s {
+	struct smcp_node_s node;
+
+	struct ge_rs232_s interface;
+	
+	struct ge_zone_s zone[GE_RS232_MAX_ZONES];
+	struct ge_partition_s partition[GE_RS232_MAX_PARTITIONS];
+
+	uint8_t zone_count;
+	
+	uint8_t panel_type;
+	uint16_t hardware_rev;
+	uint16_t software_rev;
+	uint32_t serial;
+};
+
 
 ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
 	uint8_t msg[] = {
@@ -30,45 +135,7 @@ ge_rs232_status_t toggle_chime(ge_rs232_t interface) {
 }
 
 ge_rs232_status_t
-received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232_s* interface) {
-/*
-#define GE_RS232_PTA_PANEL_TYPE             (0x01)
-#define GE_RS232_PTA_AUTOMATION_EVENT_LOST  (0x02)
-#define GE_RS232_PTA_EQUIP_LIST_ZONE_DATA   (0x03)
-#define GE_RS232_PTA_EQUIP_LIST_PARTITION_DATA  (0x04)
-#define GE_RS232_PTA_EQUIP_LIST_SUPERBUS_DEV_DATA   (0x05)
-#define GE_RS232_PTA_EQUIP_LIST_SUPERBUS_CAP_DATA   (0x06)
-#define GE_RS232_PTA_EQUIP_LIST_OUTPUT_DATA (0x07)
-#define GE_RS232_PTA_EQUIP_LIST_USER_DATA   (0x09)
-#define GE_RS232_PTA_EQUIP_LIST_SCHEDULE_DATA   (0x0A)
-#define GE_RS232_PTA_EQUIP_LIST_SCHEDULED_EVENT_DATA    (0x0B)
-#define GE_RS232_PTA_EQUIP_LIST_LIGHT_TO_SENSOR_DATA    (0x0C)
-#define GE_RS232_PTA_EQUIP_LIST_COMPLETE    (0x08)
-#define GE_RS232_PTA_CLEAR_AUTOMATION_DYNAMIC_IMAGE (0x20)
-#define GE_RS232_PTA_ZONE_STATUS            (0x21)
-#define GE_RS232_PTA_SUBCMD                 (0x22)
-#   define GE_RS232_PTA_SUBCMD_LEVEL        (0x01)
-#   define GE_RS232_PTA_SUBCMD_ALARM_TROUBLE    (0x02)
-#   define GE_RS232_PTA_SUBCMD_ENTRY_EXIT_DELAY (0x03)
-#   define GE_RS232_PTA_SUBCMD_SIREN_SETUP  (0x04)
-#   define GE_RS232_PTA_SUBCMD_SIREN_SYNC   (0x05)
-#   define GE_RS232_PTA_SUBCMD_SIREN_GO     (0x06)
-#   define GE_RS232_PTA_SUBCMD_TOUCHPAD_DISPLAY     (0x09)
-#   define GE_RS232_PTA_SUBCMD_SIREN_STOP   (0x0B)
-#   define GE_RS232_PTA_SUBCMD_FEATURE_STATE    (0x0C)
-#   define GE_RS232_PTA_SUBCMD_TEMPERATURE  (0x0D)
-#   define GE_RS232_PTA_SUBCMD_TIME_AND_DATE    (0x0E)
-#define GE_RS232_PTA_SUBCMD2                    (0x23)
-#   define GE_RS232_PTA_SUBCMD2_LIGHTS_STATE    (0x01)
-#   define GE_RS232_PTA_SUBCMD2_USER_LIGHTS (0x02)
-#   define GE_RS232_PTA_SUBCMD2_KEYFOB      (0x03)
-
-*/
-#define GE_RS232_ZONE_STATUS_TRIPPED		(1<<0)
-#define GE_RS232_ZONE_STATUS_FAULT			(1<<1)
-#define GE_RS232_ZONE_STATUS_ALARM			(1<<2)
-#define GE_RS232_ZONE_STATUS_TROUBLE		(1<<3)
-#define GE_RS232_ZONE_STATUS_BYPASSED		(1<<4)
+received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t len,struct ge_rs232_s* interface) {
 
 	static uint8_t last_msg[GE_RS232_MAX_MESSAGE_SIZE];
 	static uint8_t last_msg_len;
@@ -104,8 +171,55 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 		len=0;
 	} else if(data[0]==GE_RS232_PTA_ZONE_STATUS) {
 		fprintf(stderr,"[ZONE_STATUS]");
-		int zone = (data[3]<<8)+data[4];
-		fprintf(stderr," PN:%d AREA:%d ZONE:%d STATUS:",data[1],data[2],zone);
+		int zonei = (data[3]<<8)+data[4];
+
+		if(zonei && (zonei<=GE_RS232_MAX_ZONES)) {
+			struct ge_zone_s* zone = &node->zone[zonei-1];
+			if(!zone->node.node.parent) {
+				// Bring this zone to life.
+				char* label = NULL;
+				asprintf(&label,"zone-%d",zonei);
+				smcp_variable_node_init(&zone->node,&node->node,label);
+				zone->zone_number = zonei;
+			}
+			zone->partition = data[1];
+			zone->area = data[2];
+
+			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TRIPPED)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.tripped"
+				);
+			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_FAULT)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.fault"
+				);
+			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TROUBLE)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.trouble"
+				);
+			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_ALARM)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.alarm"
+				);
+			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_BYPASSED)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.bypass"
+				);
+
+			zone->status = data[5];
+		}
+
+		fprintf(stderr," PN:%d AREA:%d ZONE:%d STATUS:",data[1],data[2],zonei);
 		if(data[5]&GE_RS232_ZONE_STATUS_TRIPPED)
 			fprintf(stderr,"[TRIPPED]");
 		if(data[5]&GE_RS232_ZONE_STATUS_FAULT)
@@ -119,8 +233,56 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 		len = 0;
 	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_ZONE_DATA) {
 		fprintf(stderr,"[ZONE_INFO]");
-		int zone = (data[4]<<8)+data[5];
-		fprintf(stderr," PN:%d AREA:%d ZONE:%d TYPE:%d GROUP:%d STATUS:",data[1],data[2],zone,data[6],data[3]);
+		uint16_t zonei = (data[4]<<8)+data[5];
+		
+		if(zonei && (zonei<=GE_RS232_MAX_ZONES)) {
+			struct ge_zone_s* zone = &node->zone[zonei-1];
+			if(!zone->node.node.parent) {
+				// Bring this zone to life.
+				char* label = NULL;
+				asprintf(&label,"zone-%d",zonei);
+				smcp_variable_node_init(&zone->node,&node->node,label);
+			}
+			zone->partition = data[1];
+			zone->area = data[2];
+			zone->group = data[3];
+			zone->zone_number = zonei;
+			zone->type = data[6];
+
+			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_TRIPPED)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.tripped"
+				);
+			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_FAULT)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.fault"
+				);
+			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_TROUBLE)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.trouble"
+				);
+			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_ALARM)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.alarm"
+				);
+			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_BYPASSED)
+				smcp_trigger_event_with_node(
+					smcp_get_root_node((void*)node),
+					&zone->node.node,
+					"zs.bypass"
+				);
+			zone->status = data[7];
+		}
+		
+		fprintf(stderr," PN:%d AREA:%d ZONE:%d TYPE:%d GROUP:%d STATUS:",data[1],data[2],zonei,data[6],data[3]);
 		if(data[7]&GE_RS232_ZONE_STATUS_TRIPPED)
 			fprintf(stderr,"[TRIPPED]");
 		if(data[7]&GE_RS232_ZONE_STATUS_FAULT)
@@ -236,7 +398,7 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 				fprintf(stderr,"\"");
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_STOP:
-				fprintf(stderr,"[SIREN_STOP]");
+//				fprintf(stderr,"[SIREN_STOP]");
 				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_FEATURE_STATE:
@@ -269,47 +431,151 @@ ge_rs232_status_t send_byte(void* context, uint8_t byte,struct ge_rs232_s* insta
 	return GE_RS232_STATUS_OK;
 }
 
+smcp_status_t
+ge_system_request_handler(
+	struct ge_system_state_s* node,
+	smcp_method_t	method
+) {
+	return SMCP_STATUS_OK;
+}
+
+static smcp_status_t
+zone_node_var_func(
+	struct ge_zone_s *node,
+	uint8_t action,
+	uint8_t path,
+	char* value
+) {
+	smcp_status_t ret = 0;
+	enum {
+		PATH_PARTITION=0,
+		PATH_AREA,
+		PATH_GROUP,
+		PATH_TYPE,
+		PATH_TEXT,
+		PATH_STATUS_TRIPPED,
+		PATH_STATUS_FAULT,
+		PATH_STATUS_ALARM,
+		PATH_STATUS_TROUBLE,
+		PATH_STATUS_BYPASS,
+
+		PATH_COUNT,
+	};
+
+	if(path>=PATH_COUNT) {
+		ret = SMCP_STATUS_NOT_FOUND;
+	} else if(action==SMCP_VAR_GET_KEY) {
+		static const char* path_names[] = {
+			"pn",
+			"an",
+			"gn",
+			"zt",
+			"text",
+			"zs.trip",
+			"zs.fault",
+			"zs.alarm",
+			"zs.trouble",
+			"zs.bypass",
+		};
+		strcpy(value,path_names[path]);
+	} else if(action==SMCP_VAR_GET_VALUE) {
+		if(path==PATH_TEXT) {
+			// Just send the ascii for now.
+			int i = 0;
+			value[0]=0;
+			for(;i<node->label_len;i++) {
+				const char* str = ge_rs232_text_token_lookup[node->label[i]];
+				
+				if(str) {
+					strlcat(value,str,400);
+				}
+			}			
+		} else {
+			int v = 0;
+			if(path==PATH_PARTITION)
+				v = node->partition;
+			else if(path==PATH_AREA)
+				v = node->area;
+			else if(path==PATH_GROUP)
+				v = node->group;
+			else if(path==PATH_TYPE)
+				v = node->type;
+			else if(path==PATH_STATUS_TRIPPED)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_TRIPPED);
+			else if(path==PATH_STATUS_TROUBLE)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_TROUBLE);
+			else if(path==PATH_STATUS_FAULT)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_FAULT);
+			else if(path==PATH_STATUS_BYPASS)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_BYPASSED);
+			else if(path==PATH_STATUS_ALARM)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_ALARM);
+			sprintf(value,"%d",v);
+		}
+	} else if(action==SMCP_VAR_SET_VALUE) {
+		ret = SMCP_STATUS_NOT_ALLOWED;
+	} else {
+		ret = SMCP_STATUS_NOT_IMPLEMENTED;
+	}
+
+	return ret;
+}
+
 
 int main(int argc, const char* argv[]) {
-	fprintf(stderr,"works\n");
+	smcp_t smcp = smcp_create(0);
 
-	struct ge_rs232_s interface_data;
-	ge_rs232_t interface = ge_rs232_init(&interface_data);
-	interface->received_message = &received_message;
+	struct ge_system_state_s system_state_node = { };
+	
+	smcp_node_init(&system_state_node.node, smcp_get_root_node(smcp), "security");
+	
+	ge_rs232_t interface = ge_rs232_init(&system_state_node.interface);
+	interface->received_message = (void*)&received_message;
 	interface->send_byte = &send_byte;
-	ge_rs232_status_t status;
-
+	interface->context = (void*)&system_state_node;
+	
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stdin, NULL, _IONBF, 0);
 
-	uint8_t byte = 0;
 	//refresh_equipment_list(interface);
 	//toggle_chime(interface);
 	//dynamic_data_refresh(interface);
 
-	for(byte = fgetc(stdin);!feof(stdin);byte=fgetc(stdin)) {
-		if(byte==GE_RS232_NAK) {
-			fprintf(stderr,"GOT NAK\n");
-		}
-		if(byte==GE_RS232_ACK) {
-			fprintf(stderr,"GOT ACK\n");
-		}
-		status = ge_rs232_receive_byte(interface,byte);
-		if(status==GE_RS232_STATUS_NAK)
-			fprintf(stderr,"N\n");
-		else if(status==GE_RS232_STATUS_JUNK)
-			fprintf(stderr,"X");
-		else if(status)
-			fprintf(stderr,"[%d]",status);
+	fprintf(stderr,"Listening on port %d.\n",smcp_get_port(smcp));
 
+	while(!feof(stdin)) {
+		struct pollfd polltable[2] = {
+			{ fileno(stdin), POLLIN | POLLHUP, 0 },
+			{ smcp_get_fd(smcp), POLLIN | POLLHUP, 0 },
+		};
 
-		status = ge_rs232_ready_to_send(interface);
-		if(status && status != GE_RS232_STATUS_WAIT ) {
-			fprintf(stderr,"{%d}",status);
-			dynamic_data_refresh(interface);
-			//refresh_equipment_list(interface);
+		if(poll(polltable, 2, smcp_get_timeout(smcp)) < 0)
+			break;
+
+		// GE serial input.
+		if(polltable[0].revents) {
+			ge_rs232_status_t status;
+			char byte = fgetc(stdin);
+
+			if(byte==GE_RS232_NAK) {
+				fprintf(stderr,"GOT NAK\n");
+			}
+
+			if(byte==GE_RS232_ACK) {
+				fprintf(stderr,"GOT ACK\n");
+			}
+
+			status = ge_rs232_receive_byte(interface,byte);
+
+			if(status==GE_RS232_STATUS_NAK)
+				fprintf(stderr,"N\n");
+			else if(status==GE_RS232_STATUS_JUNK)
+				fprintf(stderr,"X");
+			else if(status)
+				fprintf(stderr,"[%d]",status);
 		}
-		fflush(stderr);
+
+		smcp_process(smcp, 0);
 	}
 
 	return 0;
