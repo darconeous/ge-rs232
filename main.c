@@ -1,5 +1,32 @@
 #include <stdio.h>
 #include "ge-rs232.h"
+#include <string.h>
+
+ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
+	uint8_t msg[] = {
+		GE_RS232_ATP_EQUIP_LIST_REQUEST,
+		0x03,
+	};
+	return ge_rs232_send_message(interface,msg,sizeof(msg));
+}
+
+ge_rs232_status_t dynamic_data_refresh(ge_rs232_t interface) {
+	uint8_t msg[] = {
+		GE_RS232_ATP_DYNAMIC_DATA_REFRESH,
+	};
+	return ge_rs232_send_message(interface,msg,sizeof(msg));
+}
+
+ge_rs232_status_t toggle_chime(ge_rs232_t interface) {
+	uint8_t msg[] = {
+		GE_RS232_ATP_KEYPRESS,
+		0x01,	// Partition
+		0x00,	// Area
+		0x07,	// Keypad "7"
+		0x01,	// Keypad "1"
+	};
+	return ge_rs232_send_message(interface,msg,sizeof(msg));
+}
 
 ge_rs232_status_t
 received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232_s* interface) {
@@ -36,35 +63,135 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 #   define GE_RS232_PTA_SUBCMD2_KEYFOB      (0x03)
 
 */
-	if(data[0]==GE_RS232_PTA_ZONE_STATUS) {
-		fprintf(stderr,"[ZONE_STATUS]");
-	} else if(data[0]==GE_RS232_PTA_CLEAR_AUTOMATION_DYNAMIC_IMAGE) {
-		fprintf(stderr,"[CLEAR_AUTOMATION_DYNAMIC_IMAGE]");
-		len = 0;
-		uint8_t byte = GE_RS232_ATP_DYNAMIC_DATA_REFRESH;
+#define GE_RS232_ZONE_STATUS_TRIPPED		(1<<0)
+#define GE_RS232_ZONE_STATUS_FAULT			(1<<1)
+#define GE_RS232_ZONE_STATUS_ALARM			(1<<2)
+#define GE_RS232_ZONE_STATUS_TROUBLE		(1<<3)
+#define GE_RS232_ZONE_STATUS_BYPASSED		(1<<4)
+
+	static uint8_t last_msg[GE_RS232_MAX_MESSAGE_SIZE];
+	static uint8_t last_msg_len;
+
+	if(data[0]==GE_RS232_PTA_SUBCMD && (
+		data[1]==GE_RS232_PTA_SUBCMD_SIREN_SYNC
+	)) {
+		return GE_RS232_STATUS_OK;
+	}
+
+	if(data[0]==GE_RS232_PTA_SUBCMD &&
+		data[1]==GE_RS232_PTA_SUBCMD_TOUCHPAD_DISPLAY &&
+		data[2]!=1
+	) {
+		return GE_RS232_STATUS_OK;
+	}
+
+	if(last_msg_len == len && 0==memcmp(data,last_msg,len)) {
+		return GE_RS232_STATUS_OK;
+	}
+	memcpy(last_msg,data,len);
+	last_msg_len = len;
+
+	if(data[0]==GE_RS232_PTA_AUTOMATION_EVENT_LOST) {
+		fprintf(stderr,"[AUTOMATION_EVENT_LOST]");
 		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
 		if(status != GE_RS232_STATUS_WAIT) {
-			ge_rs232_status_t status = ge_rs232_send_message(interface,&byte,1);
+			ge_rs232_status_t status = dynamic_data_refresh(interface);
 			fprintf(stderr," refresh send status = %d",status);
 		} else {
 			fprintf(stderr," UNABLE TO SEND REFRESH: NOT READY");
 		}
+		len=0;
+	} else if(data[0]==GE_RS232_PTA_ZONE_STATUS) {
+		fprintf(stderr,"[ZONE_STATUS]");
+		int zone = (data[3]<<8)+data[4];
+		fprintf(stderr," PN:%d AREA:%d ZONE:%d STATUS:",data[1],data[2],zone);
+		if(data[5]&GE_RS232_ZONE_STATUS_TRIPPED)
+			fprintf(stderr,"[TRIPPED]");
+		if(data[5]&GE_RS232_ZONE_STATUS_FAULT)
+			fprintf(stderr,"[FAULT]");
+		if(data[5]&GE_RS232_ZONE_STATUS_ALARM)
+			fprintf(stderr,"[ALARM]");
+		if(data[5]&GE_RS232_ZONE_STATUS_TROUBLE)
+			fprintf(stderr,"[TROUBLE]");
+		if(data[5]&GE_RS232_ZONE_STATUS_BYPASSED)
+			fprintf(stderr,"[BYPASSED]");
+		len = 0;
+	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_ZONE_DATA) {
+		fprintf(stderr,"[ZONE_INFO]");
+		int zone = (data[4]<<8)+data[5];
+		fprintf(stderr," PN:%d AREA:%d ZONE:%d TYPE:%d GROUP:%d STATUS:",data[1],data[2],zone,data[3]);
+		if(data[7]&GE_RS232_ZONE_STATUS_TRIPPED)
+			fprintf(stderr,"[TRIPPED]");
+		if(data[7]&GE_RS232_ZONE_STATUS_FAULT)
+			fprintf(stderr,"[FAULT]");
+		if(data[7]&GE_RS232_ZONE_STATUS_ALARM)
+			fprintf(stderr,"[ALARM]");
+		if(data[7]&GE_RS232_ZONE_STATUS_TROUBLE)
+			fprintf(stderr,"[TROUBLE]");
+		if(data[7]&GE_RS232_ZONE_STATUS_BYPASSED)
+			fprintf(stderr,"[BYPASSED]");
+		fprintf(stderr," TEXT:\"");
+		len-=8;
+		data+=8;
+		while(len--) {
+			const char* str = ge_rs232_text_token_lookup[*data++];
+			if(str) {
+				if(str[0]=='\n') {
+					if(len)
+						fprintf(stderr," | ");
+				} else {
+					fprintf(stderr,"%s",str);
+				}
+			} else {
+				fprintf(stderr,"\\x%02x",data[-1]);
+			}
+		}
+		len=0;
+		fprintf(stderr,"\"");
+
+	} else if(data[0]==GE_RS232_PTA_CLEAR_AUTOMATION_DYNAMIC_IMAGE) {
+		fprintf(stderr,"[CLEAR_AUTOMATION_DYNAMIC_IMAGE]");
+		len = 0;
 
 	} else if(data[0]==GE_RS232_PTA_PANEL_TYPE) {
 		fprintf(stderr,"[PANEL_TYPE]");
+		/*
+		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
+		if(status != GE_RS232_STATUS_WAIT) {
+			ge_rs232_status_t status = refresh_equipment_list(interface);
+			fprintf(stderr," refresh send status = %d",status);
+		} else {
+			fprintf(stderr," UNABLE TO SEND REFRESH: NOT READY");
+		}
+		*/
 	} else if(data[0]==GE_RS232_PTA_SUBCMD) {
+		char *str = NULL;
 		switch(data[1]) {
 			case GE_RS232_PTA_SUBCMD_LEVEL:
 				fprintf(stderr,"[ARMING_LEVEL]");
 				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
-				fprintf(stderr," UNh:%d UNl:%d AL:",data[4],data[5],data[6]);
+				fprintf(stderr," UNh:%d UNl:%d AL:%d",data[4],data[5],data[6]);
 				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_ALARM_TROUBLE:
 				fprintf(stderr,"[ALARM/TROUBLE]");
 				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
 				fprintf(stderr," ST:%d",data[4]);
+				fprintf(stderr," ZONE:%d",data[7]);
 				fprintf(stderr," ALARM:%d.%d",data[8],data[9]);
+				switch(data[8]) {
+					case 1: // General Alarm
+					case 2: // Alarm Canceled
+						asprintf(&str,"/home/pi/bin/report-alarm %d %d %d",data[8],data[9],data[7]);
+						break;
+					case 15: // System Trouble
+					default: break;
+				}
+				if(str) {
+					fprintf(stderr," ");
+					system(str);
+					free(str);
+				}
 				break;
 			case GE_RS232_PTA_SUBCMD_ENTRY_EXIT_DELAY:
 				fprintf(stderr,"[EXIT_DELAY]");
@@ -75,7 +202,8 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_SYNC:
-				fprintf(stderr,"[SIREN_SYNC]");
+//				fprintf(stderr,"[SIREN_SYNC]");
+				return GE_RS232_STATUS_OK;
 				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_GO:
@@ -83,6 +211,8 @@ received_message(void* context, const uint8_t* data, uint8_t len,struct ge_rs232
 				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_TOUCHPAD_DISPLAY:
+				if(data[2]!=1)
+					return GE_RS232_STATUS_OK;
 				fprintf(stderr,"[TOUCHPAD_DISPLAY]");
 				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
 				fprintf(stderr," MT:%d MSG:\"",data[4]);
@@ -138,6 +268,7 @@ ge_rs232_status_t send_byte(void* context, uint8_t byte,struct ge_rs232_s* insta
 	return GE_RS232_STATUS_OK;
 }
 
+
 int main(int argc, const char* argv[]) {
 	fprintf(stderr,"works\n");
 
@@ -150,12 +281,18 @@ int main(int argc, const char* argv[]) {
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stdin, NULL, _IONBF, 0);
 
-	uint8_t byte = GE_RS232_ATP_EQUIP_LIST_REQUEST;
-	ge_rs232_send_message(interface,&byte,1);
-	fprintf(stdout,"%c",(char)GE_RS232_NAK);
-	fflush(stderr);
+	uint8_t byte = 0;
+	//refresh_equipment_list(interface);
+	//toggle_chime(interface);
+	//dynamic_data_refresh(interface);
 
 	for(byte = fgetc(stdin);!feof(stdin);byte=fgetc(stdin)) {
+		if(byte==GE_RS232_NAK) {
+			fprintf(stderr,"GOT NAK\n");
+		}
+		if(byte==GE_RS232_ACK) {
+			fprintf(stderr,"GOT ACK\n");
+		}
 		status = ge_rs232_receive_byte(interface,byte);
 		if(status==GE_RS232_STATUS_NAK)
 			fprintf(stderr,"N\n");
@@ -164,6 +301,13 @@ int main(int argc, const char* argv[]) {
 		else if(status)
 			fprintf(stderr,"[%d]",status);
 
+
+		status = ge_rs232_ready_to_send(interface);
+		if(status && status != GE_RS232_STATUS_WAIT ) {
+			fprintf(stderr,"{%d}",status);
+			dynamic_data_refresh(interface);
+			//refresh_equipment_list(interface);
+		}
 		fflush(stderr);
 	}
 

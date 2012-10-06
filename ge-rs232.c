@@ -332,6 +332,7 @@ ge_rs232_receive_byte(ge_rs232_t self, uint8_t byte) {
 			self->buffer[self->current_byte++] = value;
 		}
 		if(self->current_byte>=self->message_len) {
+			self->reading_message = false;
 			if(self->buffer_sum == value) {
 				self->send_byte(self->context,GE_RS232_ACK,self);
 				ret = self->received_message(self->context,self->buffer,self->message_len-1,self);
@@ -340,7 +341,6 @@ ge_rs232_receive_byte(ge_rs232_t self, uint8_t byte) {
 				self->send_byte(self->context,GE_RS232_NAK,self);
 				ret = GE_RS232_STATUS_BAD_CHECKSUM;
 			}
-			self->reading_message = false;
 		} else {
 			self->buffer_sum += value;
 		}
@@ -375,6 +375,13 @@ ge_rs232_send_message(ge_rs232_t self, const uint8_t* data, uint8_t len) {
 		ret = GE_RS232_STATUS_MESSAGE_TOO_BIG;
 		goto bail;
 	}
+
+
+	if(self->last_response == 0) {
+		ret = self->send_byte(self->context,'\r',self);
+		if(ret) goto bail;
+	}
+
 
 	self->last_response = 0;
 
