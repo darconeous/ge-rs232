@@ -65,8 +65,10 @@ struct ge_zone_s {
 };
 
 struct ge_partition_s {
-	uint8_t partition;
-	uint8_t area;
+	struct smcp_variable_node_s node;
+
+	uint8_t partition_number;
+
 	uint8_t arming_level;
 
 	uint16_t armed_by;
@@ -132,6 +134,137 @@ ge_rs232_status_t toggle_chime(ge_rs232_t interface) {
 		0x01,	// Keypad "1"
 	};
 	return ge_rs232_send_message(interface,msg,sizeof(msg));
+}
+
+static smcp_status_t
+partition_node_var_func(
+	struct ge_partition_s *node,
+	uint8_t action,
+	uint8_t path,
+	char* value
+) {
+/*
+	uint8_t partition;
+
+	uint8_t arming_level;
+
+	uint16_t armed_by;
+	uint8_t feature_state;
+	uint16_t light_state;
+
+	char label[16];
+	uint8_t label_len;
+
+	char touchpad_lcd[32];
+	uint8_t touchpad_lcd_len;
+*/
+
+
+	smcp_status_t ret = 0;
+	enum {
+		PATH_ARM_LEVEL=0,
+		PATH_ARMED_BY,
+		PATH_FS_CHIME,
+		PATH_FS_ENERGY_SAVER,
+		PATH_FS_NO_DELAY,
+		PATH_FS_LATCHKEY,
+		PATH_FS_SILENT_ARMING,
+		PATH_FS_QUICK_ARM,
+		PATH_TEXT,
+		PATH_TOUCHPAD_TEXT,
+//		PATH_LIGHT_1,
+//		PATH_LIGHT_2,
+//		PATH_LIGHT_3,
+//		PATH_LIGHT_4,
+//		PATH_LIGHT_5,
+//		PATH_LIGHT_6,
+//		PATH_LIGHT_7,
+//		PATH_LIGHT_8,
+//		PATH_LIGHT_9,
+
+		PATH_COUNT,
+	};
+
+	if(path>=PATH_COUNT) {
+		ret = SMCP_STATUS_NOT_FOUND;
+	} else if(action==SMCP_VAR_GET_KEY) {
+		static const char* path_names[] = {
+			"arm-level",
+			"armed-by",
+			"chime",
+			"energy-saver",
+			"no-delay",
+			"latchkey",
+			"silent-arming",
+			"quick-arm",
+			"text",
+			"touchpad-text",
+			"light-1",
+			"light-2",
+			"light-3",
+			"light-4",
+			"light-5",
+			"light-6",
+			"light-7",
+			"light-8",
+			"light-9",
+		};
+		strcpy(value,path_names[path]);
+	} else if(action==SMCP_VAR_GET_VALUE) {
+		if(path==PATH_TEXT) {
+			// Just send the ascii for now.
+			int i = 0;
+			value[0]=0;
+			for(;i<node->label_len;i++) {
+				const char* str = ge_rs232_text_token_lookup[node->label[i]];
+
+				if(str) {
+					strlcat(value,str,400);
+				}
+			}
+		} else if(path==PATH_TOUCHPAD_TEXT) {
+			// Just send the ascii for now.
+			int i = 0;
+			value[0]=0;
+			for(;i<node->touchpad_lcd_len;i++) {
+				const char* str = ge_rs232_text_token_lookup[node->touchpad_lcd[i]];
+
+				if(str) {
+					strlcat(value,str,400);
+				}
+			}
+		} else {
+			int v = 0;
+
+			if(path==PATH_ARM_LEVEL)
+				v = node->arming_level;
+			else if(path==PATH_ARMED_BY)
+				v = node->armed_by;
+			else if(path==PATH_FS_CHIME)
+				v = !!(node->feature_state & (1<<0));
+			else if(path==PATH_FS_ENERGY_SAVER)
+				v = !!(node->feature_state & (1<<1));
+			else if(path==PATH_FS_NO_DELAY)
+				v = !!(node->feature_state & (1<<2));
+			else if(path==PATH_FS_LATCHKEY)
+				v = !!(node->feature_state & (1<<3));
+			else if(path==PATH_FS_SILENT_ARMING)
+				v = !!(node->feature_state & (1<<4));
+			else if(path==PATH_FS_QUICK_ARM)
+				v = !!(node->feature_state & (1<<5));
+			sprintf(value,"%d",v);
+		}
+	} else if(action==SMCP_VAR_SET_VALUE) {
+		if(path==PATH_ARM_LEVEL)
+			ret = SMCP_STATUS_NOT_IMPLEMENTED;
+		else if(path==PATH_FS_CHIME)
+			toggle_chime(&((struct ge_system_state_s*)node->node.node.parent)->interface);
+		ret = SMCP_STATUS_NOT_ALLOWED;
+	} else {
+		ret = SMCP_STATUS_NOT_IMPLEMENTED;
+	}
+
+	return ret;
 }
 
 static smcp_status_t
@@ -459,26 +592,52 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 			case GE_RS232_PTA_SUBCMD_TOUCHPAD_DISPLAY:
 				if(data[2]!=1)
 					return GE_RS232_STATUS_OK;
+
+				int partitioni = data[2];
+
 				fprintf(stderr,"[TOUCHPAD_DISPLAY]");
 				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
 				fprintf(stderr," MT:%d MSG:\"",data[4]);
-				len-=5;
-				data+=5;
-				while(len--) {
-					const char* str = ge_rs232_text_token_lookup[*data++];
-					if(str) {
-						if(str[0]=='\n') {
-							if(len)
-								fprintf(stderr," | ");
-						} else {
-							fprintf(stderr,"%s",str);
-						}
+
+				if(partitioni && (partitioni<=GE_RS232_MAX_PARTITIONS)) {
+					struct ge_partition_s* partition = &node->partition[partitioni-1];
+					if(!partition->node.node.parent) {
+						// Bring this partition to life.
+						char* label = NULL;
+						asprintf(&label,"p-%d",partitioni);
+						smcp_variable_node_init(&partition->node,&node->node,label);
+						partition->node.func = (smcp_variable_node_func)&partition_node_var_func;
+						partition->partition_number = partitioni;
 					} else {
-						fprintf(stderr,"\\x%02x",data[-1]);
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"touchpad_text"
+						);
 					}
+
+					len-=5;
+					data+=5;
+
+					partition->touchpad_lcd_len = len;
+					memcpy(partition->touchpad_lcd,data,len);
+
+					while(len--) {
+						const char* str = ge_rs232_text_token_lookup[*data++];
+						if(str) {
+							if(str[0]=='\n') {
+								if(len)
+									fprintf(stderr," | ");
+							} else {
+								fprintf(stderr,"%s",str);
+							}
+						} else {
+							fprintf(stderr,"\\x%02x",data[-1]);
+						}
+					}
+					len=0;
+					fprintf(stderr,"\"");
 				}
-				len=0;
-				fprintf(stderr,"\"");
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_STOP:
 //				fprintf(stderr,"[SIREN_STOP]");
