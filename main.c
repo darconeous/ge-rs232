@@ -638,8 +638,8 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 					len-=5;
 					data+=5;
 
-					partition->touchpad_lcd_len = len;
-					memcpy(partition->touchpad_lcd,data,len);
+					partition->touchpad_lcd_len = len+1;
+					memcpy(partition->touchpad_lcd,data,len+1);
 
 					while(len--) {
 						const char* str = ge_rs232_text_token_lookup[*data++];
