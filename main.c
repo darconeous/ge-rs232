@@ -72,7 +72,7 @@ struct ge_partition_s {
 	uint16_t armed_by;
 	uint8_t feature_state;
 	uint16_t light_state;
-	
+
 	char label[16];
 	uint8_t label_len;
 
@@ -95,12 +95,12 @@ struct ge_system_state_s {
 	struct smcp_node_s node;
 
 	struct ge_rs232_s interface;
-	
+
 	struct ge_zone_s zone[GE_RS232_MAX_ZONES];
 	struct ge_partition_s partition[GE_RS232_MAX_PARTITIONS];
 
 	uint8_t zone_count;
-	
+
 	uint8_t panel_type;
 	uint16_t hardware_rev;
 	uint16_t software_rev;
@@ -134,6 +134,87 @@ ge_rs232_status_t toggle_chime(ge_rs232_t interface) {
 	return ge_rs232_send_message(interface,msg,sizeof(msg));
 }
 
+static smcp_status_t
+zone_node_var_func(
+	struct ge_zone_s *node,
+	uint8_t action,
+	uint8_t path,
+	char* value
+) {
+	smcp_status_t ret = 0;
+	enum {
+		PATH_PARTITION=0,
+		PATH_AREA,
+		PATH_GROUP,
+		PATH_TYPE,
+		PATH_TEXT,
+		PATH_STATUS_TRIPPED,
+		PATH_STATUS_FAULT,
+		PATH_STATUS_ALARM,
+		PATH_STATUS_TROUBLE,
+		PATH_STATUS_BYPASS,
+
+		PATH_COUNT,
+	};
+
+	if(path>=PATH_COUNT) {
+		ret = SMCP_STATUS_NOT_FOUND;
+	} else if(action==SMCP_VAR_GET_KEY) {
+		static const char* path_names[] = {
+			"pn",
+			"an",
+			"gn",
+			"zt",
+			"text",
+			"zs.trip",
+			"zs.fault",
+			"zs.alarm",
+			"zs.trouble",
+			"zs.bypass",
+		};
+		strcpy(value,path_names[path]);
+	} else if(action==SMCP_VAR_GET_VALUE) {
+		if(path==PATH_TEXT) {
+			// Just send the ascii for now.
+			int i = 0;
+			value[0]=0;
+			for(;i<node->label_len;i++) {
+				const char* str = ge_rs232_text_token_lookup[node->label[i]];
+
+				if(str) {
+					strlcat(value,str,400);
+				}
+			}
+		} else {
+			int v = 0;
+			if(path==PATH_PARTITION)
+				v = node->partition;
+			else if(path==PATH_AREA)
+				v = node->area;
+			else if(path==PATH_GROUP)
+				v = node->group;
+			else if(path==PATH_TYPE)
+				v = node->type;
+			else if(path==PATH_STATUS_TRIPPED)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_TRIPPED);
+			else if(path==PATH_STATUS_TROUBLE)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_TROUBLE);
+			else if(path==PATH_STATUS_FAULT)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_FAULT);
+			else if(path==PATH_STATUS_BYPASS)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_BYPASSED);
+			else if(path==PATH_STATUS_ALARM)
+				v = !!(node->status & GE_RS232_ZONE_STATUS_ALARM);
+			sprintf(value,"%d",v);
+		}
+	} else if(action==SMCP_VAR_SET_VALUE) {
+		ret = SMCP_STATUS_NOT_ALLOWED;
+	} else {
+		ret = SMCP_STATUS_NOT_IMPLEMENTED;
+	}
+
+	return ret;
+}
 ge_rs232_status_t
 received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t len,struct ge_rs232_s* interface) {
 
@@ -180,35 +261,36 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				char* label = NULL;
 				asprintf(&label,"zone-%d",zonei);
 				smcp_variable_node_init(&zone->node,&node->node,label);
+				zone->node.func = (smcp_variable_node_func)&zone_node_var_func;
 				zone->zone_number = zonei;
 			} else {
 				if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TRIPPED)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.tripped"
 					);
 				if((zone->status^data[5])&GE_RS232_ZONE_STATUS_FAULT)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.fault"
 					);
 				if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TROUBLE)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.trouble"
 					);
 				if((zone->status^data[5])&GE_RS232_ZONE_STATUS_ALARM)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.alarm"
 					);
 				if((zone->status^data[5])&GE_RS232_ZONE_STATUS_BYPASSED)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.bypass"
 					);
@@ -231,9 +313,9 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 			fprintf(stderr,"[BYPASSED]");
 		len = 0;
 	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_ZONE_DATA) {
-		fprintf(stderr,"[ZONE_INFO]");
+		fprintf(stderr,"[EQUIP_LIST_ZONE_DATA]");
 		uint16_t zonei = (data[4]<<8)+data[5];
-		
+
 		if(zonei && (zonei<=GE_RS232_MAX_ZONES)) {
 			struct ge_zone_s* zone = &node->zone[zonei-1];
 			if(!zone->node.node.parent) {
@@ -241,34 +323,35 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				char* label = NULL;
 				asprintf(&label,"zone-%d",zonei);
 				smcp_variable_node_init(&zone->node,&node->node,label);
+				zone->node.func = (smcp_variable_node_func)&zone_node_var_func;
 			} else {
 				if((zone->status^data[7])&GE_RS232_ZONE_STATUS_TRIPPED)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.tripped"
 					);
 				if((zone->status^data[7])&GE_RS232_ZONE_STATUS_FAULT)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.fault"
 					);
 				if((zone->status^data[7])&GE_RS232_ZONE_STATUS_TROUBLE)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.trouble"
 					);
 				if((zone->status^data[7])&GE_RS232_ZONE_STATUS_ALARM)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.alarm"
 					);
 				if((zone->status^data[7])&GE_RS232_ZONE_STATUS_BYPASSED)
 					smcp_trigger_event_with_node(
-						smcp_get_root_node((void*)node),
+						smcp_node_get_root((smcp_node_t)node),
 						&zone->node.node,
 						"zs.bypass"
 					);
@@ -281,7 +364,7 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 
 			zone->status = data[7];
 		}
-		
+
 		fprintf(stderr," PN:%d AREA:%d ZONE:%d TYPE:%d GROUP:%d STATUS:",data[1],data[2],zonei,data[6],data[3]);
 		if(data[7]&GE_RS232_ZONE_STATUS_TRIPPED)
 			fprintf(stderr,"[TRIPPED]");
@@ -439,96 +522,15 @@ ge_system_request_handler(
 	return SMCP_STATUS_OK;
 }
 
-static smcp_status_t
-zone_node_var_func(
-	struct ge_zone_s *node,
-	uint8_t action,
-	uint8_t path,
-	char* value
-) {
-	smcp_status_t ret = 0;
-	enum {
-		PATH_PARTITION=0,
-		PATH_AREA,
-		PATH_GROUP,
-		PATH_TYPE,
-		PATH_TEXT,
-		PATH_STATUS_TRIPPED,
-		PATH_STATUS_FAULT,
-		PATH_STATUS_ALARM,
-		PATH_STATUS_TROUBLE,
-		PATH_STATUS_BYPASS,
-
-		PATH_COUNT,
-	};
-
-	if(path>=PATH_COUNT) {
-		ret = SMCP_STATUS_NOT_FOUND;
-	} else if(action==SMCP_VAR_GET_KEY) {
-		static const char* path_names[] = {
-			"pn",
-			"an",
-			"gn",
-			"zt",
-			"text",
-			"zs.trip",
-			"zs.fault",
-			"zs.alarm",
-			"zs.trouble",
-			"zs.bypass",
-		};
-		strcpy(value,path_names[path]);
-	} else if(action==SMCP_VAR_GET_VALUE) {
-		if(path==PATH_TEXT) {
-			// Just send the ascii for now.
-			int i = 0;
-			value[0]=0;
-			for(;i<node->label_len;i++) {
-				const char* str = ge_rs232_text_token_lookup[node->label[i]];
-				
-				if(str) {
-					strlcat(value,str,400);
-				}
-			}			
-		} else {
-			int v = 0;
-			if(path==PATH_PARTITION)
-				v = node->partition;
-			else if(path==PATH_AREA)
-				v = node->area;
-			else if(path==PATH_GROUP)
-				v = node->group;
-			else if(path==PATH_TYPE)
-				v = node->type;
-			else if(path==PATH_STATUS_TRIPPED)
-				v = !!(node->status & GE_RS232_ZONE_STATUS_TRIPPED);
-			else if(path==PATH_STATUS_TROUBLE)
-				v = !!(node->status & GE_RS232_ZONE_STATUS_TROUBLE);
-			else if(path==PATH_STATUS_FAULT)
-				v = !!(node->status & GE_RS232_ZONE_STATUS_FAULT);
-			else if(path==PATH_STATUS_BYPASS)
-				v = !!(node->status & GE_RS232_ZONE_STATUS_BYPASSED);
-			else if(path==PATH_STATUS_ALARM)
-				v = !!(node->status & GE_RS232_ZONE_STATUS_ALARM);
-			sprintf(value,"%d",v);
-		}
-	} else if(action==SMCP_VAR_SET_VALUE) {
-		ret = SMCP_STATUS_NOT_ALLOWED;
-	} else {
-		ret = SMCP_STATUS_NOT_IMPLEMENTED;
-	}
-
-	return ret;
-}
 
 
 int main(int argc, const char* argv[]) {
 	smcp_t smcp = smcp_create(0);
 
 	struct ge_system_state_s system_state_node = { };
-	
+
 	smcp_node_init(&system_state_node.node, smcp_get_root_node(smcp), "security");
-	
+
 	ge_rs232_t interface = ge_rs232_init(&system_state_node.interface);
 	interface->received_message = (void*)&received_message;
 	interface->send_byte = &send_byte;
