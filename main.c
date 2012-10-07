@@ -255,11 +255,13 @@ partition_node_var_func(
 			sprintf(value,"%d",v);
 		}
 	} else if(action==SMCP_VAR_SET_VALUE) {
-		if(path==PATH_ARM_LEVEL)
+		if(path==PATH_ARM_LEVEL) {
 			ret = SMCP_STATUS_NOT_IMPLEMENTED;
-		else if(path==PATH_FS_CHIME)
+		} else if(path==PATH_FS_CHIME) {
 			toggle_chime(&((struct ge_system_state_s*)node->node.node.parent)->interface);
-		ret = SMCP_STATUS_NOT_ALLOWED;
+		} else {
+			ret = SMCP_STATUS_NOT_ALLOWED;
+		}
 	} else {
 		ret = SMCP_STATUS_NOT_IMPLEMENTED;
 	}
@@ -547,6 +549,23 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 		char *str = NULL;
 		switch(data[1]) {
 			case GE_RS232_PTA_SUBCMD_LEVEL:
+				{
+				int partitioni = data[2];
+				if(partitioni && (partitioni<=GE_RS232_MAX_PARTITIONS)) {
+					struct ge_partition_s* partition = &node->partition[partitioni-1];
+					if(!partition->node.node.parent) {
+						// Bring this partition to life.
+						char* label = NULL;
+						asprintf(&label,"p-%d",partitioni);
+						smcp_variable_node_init(&partition->node,&node->node,label);
+						partition->node.func = (smcp_variable_node_func)&partition_node_var_func;
+						partition->partition_number = partitioni;
+					} else {
+					}
+					partition->arming_level = data[6];
+					partition->armed_by = (data[4]<<8)+(data[5]);
+				}
+				}
 				fprintf(stderr,"[ARMING_LEVEL]");
 				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
 				fprintf(stderr," UNh:%d UNl:%d AL:%d",data[4],data[5],data[6]);
@@ -593,12 +612,12 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				if(data[2]!=1)
 					return GE_RS232_STATUS_OK;
 
-				int partitioni = data[2];
-
 				fprintf(stderr,"[TOUCHPAD_DISPLAY]");
 				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
 				fprintf(stderr," MT:%d MSG:\"",data[4]);
 
+				{
+				int partitioni = data[2];
 				if(partitioni && (partitioni<=GE_RS232_MAX_PARTITIONS)) {
 					struct ge_partition_s* partition = &node->partition[partitioni-1];
 					if(!partition->node.node.parent) {
@@ -638,12 +657,29 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 					len=0;
 					fprintf(stderr,"\"");
 				}
+				}
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_STOP:
 //				fprintf(stderr,"[SIREN_STOP]");
 				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_FEATURE_STATE:
+				{
+				int partitioni = data[2];
+				if(partitioni && (partitioni<=GE_RS232_MAX_PARTITIONS)) {
+					struct ge_partition_s* partition = &node->partition[partitioni-1];
+					if(!partition->node.node.parent) {
+						// Bring this partition to life.
+						char* label = NULL;
+						asprintf(&label,"p-%d",partitioni);
+						smcp_variable_node_init(&partition->node,&node->node,label);
+						partition->node.func = (smcp_variable_node_func)&partition_node_var_func;
+						partition->partition_number = partitioni;
+					} else {
+					}
+					partition->feature_state = data[4];
+				}
+				}
 				fprintf(stderr,"[FEATURE_STATE]");
 				break;
 			case GE_RS232_PTA_SUBCMD_TEMPERATURE:
