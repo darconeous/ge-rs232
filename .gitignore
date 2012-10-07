@@ -1,3 +1,4 @@
+.DS_Store
 ge-rs232.o
 main.o
 ge-rs232d
