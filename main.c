@@ -1,3 +1,4 @@
+#include <smcp/assert_macros.h>
 #include <stdio.h>
 #include "ge-rs232.h"
 #include <string.h>
@@ -6,6 +7,7 @@
 #include <smcp/smcp-node.h>
 #include <smcp/smcp-pairing.h>
 #include <poll.h>
+#include <termios.h>
 
 #define GE_RS232_ZONE_TYPE_HARDWIRED	(0)
 #define GE_RS232_ZONE_TYPE_RF			(2)
@@ -107,8 +109,68 @@ struct ge_system_state_s {
 	uint16_t hardware_rev;
 	uint16_t software_rev;
 	uint32_t serial;
+
+	struct smcp_async_response_s async_response;
 };
 
+static void
+async_response_ack_handler(int statuscode, struct ge_system_state_s* self) {
+    struct smcp_async_response_s* async_response = &self->async_response;
+	smcp_finish_async_response(async_response);
+}
+
+static smcp_status_t
+resend_async_response(struct ge_system_state_s* self) {
+    smcp_status_t ret = 0;
+    struct smcp_async_response_s* async_response = &self->async_response;
+
+	if(self->interface.last_response == GE_RS232_ACK)
+        ret = smcp_outbound_begin_response(COAP_RESULT_204_CHANGED);
+	else
+        ret = smcp_outbound_begin_response(COAP_RESULT_500_INTERNAL_SERVER_ERROR);
+	require_noerr(ret,bail);
+
+    ret = smcp_outbound_set_async_response(async_response);
+    require_noerr(ret,bail);
+
+	if(self->interface.last_response == GE_RS232_NAK)
+		smcp_outbound_set_content_formatted("NAK");
+	else if(self->interface.last_response == 0)
+		smcp_outbound_set_content_formatted("ACK-TIMEOUT");
+	else if(self->interface.last_response != GE_RS232_ACK)
+		smcp_outbound_set_content_formatted("WEIRD-LAST_RESPONSE '%u'",(int)self->interface.last_response);
+
+    ret = smcp_outbound_send();
+    require_noerr(ret,bail);
+
+    if(ret) {
+        assert_printf(
+            "smcp_outbound_send() returned error %d(%s).\n",
+            ret,
+            smcp_status_to_cstr(ret)
+        );
+        goto bail;
+    }
+
+bail:
+    return ret;
+}
+
+void got_panel_response(struct ge_system_state_s* self,struct ge_rs232_s* instance, bool didAck) {
+	instance->got_response = NULL;
+	smcp_t smcp_instance = (smcp_t)smcp_node_get_root(&self->node);
+
+	smcp_begin_transaction(
+		smcp_instance,
+		smcp_get_next_tid(smcp_instance,NULL),
+		5*1000,    // Retry for five seconds.
+		0, // Flags
+		(void*)&resend_async_response,
+		(void*)&async_response_ack_handler,
+		(void*)self
+	);
+
+}
 
 ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
 	uint8_t msg[] = {
@@ -121,6 +183,7 @@ ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
 ge_rs232_status_t dynamic_data_refresh(ge_rs232_t interface) {
 	uint8_t msg[] = {
 		GE_RS232_ATP_DYNAMIC_DATA_REFRESH,
+		0x00,
 	};
 	return ge_rs232_send_message(interface,msg,sizeof(msg));
 }
@@ -130,7 +193,7 @@ ge_rs232_status_t toggle_chime(ge_rs232_t interface) {
 		GE_RS232_ATP_KEYPRESS,
 		0x01,	// Partition
 		0x00,	// Area
-		0x07,	// Keypad "7"
+		0x02,	// Keypad "7"
 		0x01,	// Keypad "1"
 	};
 	return ge_rs232_send_message(interface,msg,sizeof(msg));
@@ -172,6 +235,8 @@ partition_node_var_func(
 		PATH_FS_QUICK_ARM,
 		PATH_TEXT,
 		PATH_TOUCHPAD_TEXT,
+		PATH_REFRESH_EQUIPMENT,
+		PATH_DDR,
 //		PATH_LIGHT_1,
 //		PATH_LIGHT_2,
 //		PATH_LIGHT_3,
@@ -199,6 +264,8 @@ partition_node_var_func(
 			"quick-arm",
 			"text",
 			"touchpad-text",
+			"refresh-equipment",
+			"ddr",
 			"light-1",
 			"light-2",
 			"light-3",
@@ -219,7 +286,7 @@ partition_node_var_func(
 				const char* str = ge_rs232_text_token_lookup[node->label[i]];
 
 				if(str) {
-					strlcat(value,str,400);
+					strlcat(value,str,SMCP_VARIABLE_MAX_VALUE_LENGTH);
 				}
 			}
 		} else if(path==PATH_TOUCHPAD_TEXT) {
@@ -230,7 +297,7 @@ partition_node_var_func(
 				const char* str = ge_rs232_text_token_lookup[node->touchpad_lcd[i]];
 
 				if(str) {
-					strlcat(value,str,400);
+					strlcat(value,str,SMCP_VARIABLE_MAX_VALUE_LENGTH);
 				}
 			}
 		} else {
@@ -258,14 +325,43 @@ partition_node_var_func(
 		if(path==PATH_ARM_LEVEL) {
 			ret = SMCP_STATUS_NOT_IMPLEMENTED;
 		} else if(path==PATH_FS_CHIME) {
-			toggle_chime(&((struct ge_system_state_s*)node->node.node.parent)->interface);
+			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
+			if(!system_state->interface.got_response) {
+				toggle_chime(&system_state->interface);
+				ret = smcp_start_async_response(&system_state->async_response);
+				require_noerr(ret,bail);
+				system_state->interface.got_response=(void*)&got_panel_response;
+				ret = SMCP_STATUS_ASYNC_RESPONSE;
+			} else {
+				ret = SMCP_STATUS_FAILURE;
+			}
+		} else if(path==PATH_REFRESH_EQUIPMENT) {
+			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
+			if(!system_state->interface.got_response) {
+				refresh_equipment_list(&system_state->interface);
+				ret = smcp_start_async_response(&system_state->async_response);
+				require_noerr(ret,bail);
+				system_state->interface.got_response=(void*)&got_panel_response;
+				ret = SMCP_STATUS_ASYNC_RESPONSE;
+			}
+		} else if(path==PATH_DDR) {
+			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
+			if(!system_state->interface.got_response) {
+				dynamic_data_refresh(&system_state->interface);
+				ret = smcp_start_async_response(&system_state->async_response);
+				require_noerr(ret,bail);
+				system_state->interface.got_response=(void*)&got_panel_response;
+				ret = SMCP_STATUS_ASYNC_RESPONSE;
+			} else {
+				ret = SMCP_STATUS_FAILURE;
+			}
 		} else {
 			ret = SMCP_STATUS_NOT_ALLOWED;
 		}
 	} else {
 		ret = SMCP_STATUS_NOT_IMPLEMENTED;
 	}
-
+bail:
 	return ret;
 }
 
@@ -317,7 +413,7 @@ zone_node_var_func(
 				const char* str = ge_rs232_text_token_lookup[node->label[i]];
 
 				if(str) {
-					strlcat(value,str,400);
+					strlcat(value,str,SMCP_VARIABLE_MAX_VALUE_LENGTH);
 				}
 			}
 		} else {
@@ -402,7 +498,7 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 		data[1]==GE_RS232_PTA_SUBCMD_TOUCHPAD_DISPLAY &&
 		data[2]!=1
 	) {
-		return GE_RS232_STATUS_OK;
+		//return GE_RS232_STATUS_OK;
 	}
 
 	if(last_msg_len == len && 0==memcmp(data,last_msg,len)) {
@@ -413,6 +509,7 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 
 	if(data[0]==GE_RS232_PTA_AUTOMATION_EVENT_LOST) {
 		fprintf(stderr,"[AUTOMATION_EVENT_LOST]");
+/*
 		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
 		if(status != GE_RS232_STATUS_WAIT) {
 			ge_rs232_status_t status = dynamic_data_refresh(interface);
@@ -420,11 +517,12 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 		} else {
 			fprintf(stderr," UNABLE TO SEND REFRESH: NOT READY");
 		}
+*/
 		len=0;
 	} else if(data[0]==GE_RS232_PTA_ZONE_STATUS) {
 		fprintf(stderr,"[ZONE_STATUS]");
 		int zonei = (data[3]<<8)+data[4];
-		
+
 		struct ge_zone_s* zone = ge_get_zone(node,zonei);
 
 		if(zone) {
@@ -519,6 +617,9 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 			zone->type = data[6];
 
 			zone->status = data[7];
+
+			zone->label_len = len-8;
+			memcpy(zone->label,data+8,len-8);
 		}
 
 		fprintf(stderr," PN:%d AREA:%d ZONE:%d TYPE:%d GROUP:%d STATUS:",data[1],data[2],zonei,data[6],data[3]);
@@ -621,8 +722,8 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_TOUCHPAD_DISPLAY:
-				if(data[2]!=1)
-					return GE_RS232_STATUS_OK;
+				//if(data[2]!=1)
+				//	return GE_RS232_STATUS_OK;
 
 				fprintf(stderr,"[TOUCHPAD_DISPLAY]");
 				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
@@ -641,8 +742,8 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 					len-=5;
 					data+=5;
 
-					partition->touchpad_lcd_len = len+1;
-					memcpy(partition->touchpad_lcd,data,len+1);
+					partition->touchpad_lcd_len = len;
+					memcpy(partition->touchpad_lcd,data,len);
 
 					while(len--) {
 						const char* str = ge_rs232_text_token_lookup[*data++];
@@ -698,7 +799,7 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 }
 
 ge_rs232_status_t send_byte(void* context, uint8_t byte,struct ge_rs232_s* instance) {
-	fprintf(stdout,"%c",(char)byte);
+	fputc(byte,stdout);
 	fflush(stdout);
 	return GE_RS232_STATUS_OK;
 }
@@ -720,6 +821,8 @@ int main(int argc, const char* argv[]) {
 
 	smcp_node_init(&system_state_node.node, smcp_get_root_node(smcp), "security");
 
+	fprintf(stderr,"Listening on port %d.\n",smcp_get_port(smcp));
+
 	ge_rs232_t interface = ge_rs232_init(&system_state_node.interface);
 	interface->received_message = (void*)&received_message;
 	interface->send_byte = &send_byte;
@@ -730,11 +833,35 @@ int main(int argc, const char* argv[]) {
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stdin, NULL, _IONBF, 0);
 
+	int r;
+	struct termios t;
+	if(tcgetattr(fileno(stdin), &t)==0) {
+		cfmakeraw(&t);
+		cfsetspeed(&t, 9600);
+		t.c_cflag = CLOCAL | CREAD | CS8;
+		t.c_iflag = IGNPAR | IGNBRK;
+		t.c_oflag = 0;
+		t.c_lflag = 0;
+		tcsetattr(fileno(stdin), TCSANOW, &t);
+	}
+	if(tcgetattr(fileno(stdout), &t)==0) {
+		cfmakeraw(&t);
+		cfsetspeed(&t, 9600);
+		t.c_cflag = CLOCAL | CREAD | CS8;
+		t.c_iflag = IGNPAR | IGNBRK;
+		t.c_oflag = 0;
+		t.c_lflag = 0;
+		tcsetattr(fileno(stdout), TCSANOW, &t);
+	}
+
+	// Make sure we at least have the first partition set up.
+	ge_get_partition(&system_state_node,1);
+
 	//refresh_equipment_list(interface);
 	//toggle_chime(interface);
 	//dynamic_data_refresh(interface);
+	//dynamic_data_refresh(interface);
 
-	fprintf(stderr,"Listening on port %d.\n",smcp_get_port(smcp));
 
 	while(!feof(stdin)) {
 		struct pollfd polltable[2] = {
@@ -757,7 +884,6 @@ int main(int argc, const char* argv[]) {
 			if(byte==GE_RS232_ACK) {
 				fprintf(stderr,"GOT ACK\n");
 			}
-
 			status = ge_rs232_receive_byte(interface,byte);
 
 			if(status==GE_RS232_STATUS_NAK)
@@ -766,6 +892,12 @@ int main(int argc, const char* argv[]) {
 				fprintf(stderr,"X");
 			else if(status)
 				fprintf(stderr,"[%d]",status);
+		}
+		if(interface->got_response
+			&& ge_rs232_ready_to_send(interface)==GE_RS232_STATUS_TIMEOUT
+		) {
+			interface->got_response(interface->context,interface,false);
+			//interface->last_response = GE_RS232_NAK;
 		}
 
 		smcp_process(smcp, 0);

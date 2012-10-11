@@ -23,6 +23,7 @@ struct ge_rs232_s {
 	uint8_t buffer[GE_RS232_MAX_MESSAGE_SIZE];
 	ge_rs232_status_t (*received_message)(void* context, const uint8_t* data, uint8_t len,struct ge_rs232_s* instance);
 	ge_rs232_status_t (*send_byte)(void* context, uint8_t byte,struct ge_rs232_s* instance);
+	void (*got_response)(void* context,struct ge_rs232_s* instance, bool didAck);
 };
 
 typedef struct ge_rs232_s* ge_rs232_t;

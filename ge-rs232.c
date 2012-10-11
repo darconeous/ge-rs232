@@ -225,27 +225,6 @@ const char *ge_rs232_text_token_lookup[256] = {
 	[0xFE]="[!]",	// Indicates that the next token should blink.
 };
 
-/*
-struct ge_rs232_s {
-	bool reading_message;
-	uint8_t current_byte;
-	uint8_t message_len;
-	uint8_t nibble_buffer;
-	uint8_t buffer[GE_RS232_MAX_MESSAGE_SIZE];
-	uint8_t last_response;
-	ge_rs232_status_t (*received_message)(void* context, const uint8_t* data, uint8_t len);
-	ge_rs232_status_t (*send_byte)(void* context, uint8_t byte);
-};
-#define GE_RS232_STATUS_OK					(0)
-#define GE_RS232_STATUS_ERROR				(-1)
-#define GE_RS232_STATUS_WAIT				(-2)
-#define GE_RS232_STATUS_NAK					(-3)
-#define GE_RS232_STATUS_TIMEOUT				(-4)
-#define GE_RS232_STATUS_MESSAGE_TOO_BIG		(-5)
-#define GE_RS232_STATUS_JUNK				(-6)
-#define GE_RS232_STATUS_BAD_CHECKSUM		(-7)
-*/
-
 #if __AVR__
 #include <avr/pgmspace.h>
 static char int_to_hex_digit(uint8_t x) {
@@ -306,8 +285,10 @@ ge_rs232_receive_byte(ge_rs232_t self, uint8_t byte) {
 		self->buffer_sum = 0;
 	} else if(byte == GE_RS232_ACK && !self->last_response) {
 		self->last_response = GE_RS232_ACK;
+		self->got_response(self->context,self,true);
 	} else if(byte == GE_RS232_NAK && !self->last_response) {
 		self->last_response = GE_RS232_NAK;
+		self->got_response(self->context,self,false);
 	} else if(self->reading_message) {
 		if(!self->nibble_buffer) {
 			self->nibble_buffer = byte;
