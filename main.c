@@ -188,12 +188,51 @@ ge_rs232_status_t dynamic_data_refresh(ge_rs232_t interface) {
 	return ge_rs232_send_message(interface,msg,sizeof(msg));
 }
 
+
+ge_rs232_status_t send_keypress(ge_rs232_t interface,uint8_t partition, uint8_t area, char* keys) {
+	uint8_t msg[50] = {
+		GE_RS232_ATP_KEYPRESS,
+		partition,	// Partition
+		area,	// Area
+	};
+	uint8_t len = 3;
+	for(;*keys;keys++) {
+		uint8_t code = 255;
+		switch(*keys) {
+			case '0':
+			case '1':
+			case '2':
+			case '3':
+			case '4':
+			case '5':
+			case '6':
+			case '7':
+			case '8':
+			case '9':
+				code = *keys - '0';
+				break;
+			case '*':code = 0x0A;break;
+			case '#':code = 0x0B;break;
+			case 'A':case 'a':code = 0x2C;break;
+			case 'B':case 'b':code = 0x30;break;
+			case 'C':case 'c':code = 0x2D;break;
+			case 'D':case 'd':code = 0x33;break;
+			case 'E':case 'e':code = 0x2E;break;
+			case 'F':case 'f':code = 0x36;break;
+		}
+		if(code==255)
+			continue;
+		msg[len++] = code;
+	}
+	return ge_rs232_send_message(interface,msg,len);
+}
+
 ge_rs232_status_t toggle_chime(ge_rs232_t interface) {
 	uint8_t msg[] = {
 		GE_RS232_ATP_KEYPRESS,
 		0x01,	// Partition
 		0x00,	// Area
-		0x02,	// Keypad "7"
+		0x07,	// Keypad "7"
 		0x01,	// Keypad "1"
 	};
 	return ge_rs232_send_message(interface,msg,sizeof(msg));
@@ -235,6 +274,7 @@ partition_node_var_func(
 		PATH_FS_QUICK_ARM,
 		PATH_TEXT,
 		PATH_TOUCHPAD_TEXT,
+		PATH_KEYPRESS,
 		PATH_REFRESH_EQUIPMENT,
 		PATH_DDR,
 //		PATH_LIGHT_1,
@@ -264,6 +304,7 @@ partition_node_var_func(
 			"quick-arm",
 			"text",
 			"touchpad-text",
+			"keypress",
 			"refresh-equipment",
 			"ddr",
 			"light-1",
@@ -343,6 +384,17 @@ partition_node_var_func(
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
+			}
+		} else if(path==PATH_KEYPRESS) {
+			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
+			if(!system_state->interface.got_response) {
+				send_keypress(&system_state->interface,node->partition_number,0,value);
+				ret = smcp_start_async_response(&system_state->async_response);
+				require_noerr(ret,bail);
+				system_state->interface.got_response=(void*)&got_panel_response;
+				ret = SMCP_STATUS_ASYNC_RESPONSE;
+			} else {
+				ret = SMCP_STATUS_FAILURE;
 			}
 		} else if(path==PATH_DDR) {
 			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
