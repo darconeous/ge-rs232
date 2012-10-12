@@ -4,9 +4,10 @@
 #include <stdbool.h>
 #include <time.h>
 
-#define GE_RS232_START_OF_MESSAGE	(0x0A)
-#define GE_RS232_ACK				(0x06)
-#define GE_RS232_NAK				(0x15)
+#define GE_RS232_START_OF_MESSAGE	(0x0A)	// ASCII Line Feed
+#define GE_RS232_ACK				(0x06)	// ASCII ACK
+#define GE_RS232_NAK				(0x15)	// ASCII NAK
+
 #define GE_RS232_MAX_MESSAGE_SIZE	(56)
 
 typedef int ge_rs232_status_t;
@@ -21,6 +22,9 @@ struct ge_rs232_s {
 	uint8_t buffer_sum;
 	time_t last_sent;
 	uint8_t buffer[GE_RS232_MAX_MESSAGE_SIZE];
+	uint8_t output_buffer[GE_RS232_MAX_MESSAGE_SIZE];
+	uint8_t output_buffer_len;
+	uint8_t output_attempt_count;
 	ge_rs232_status_t (*received_message)(void* context, const uint8_t* data, uint8_t len,struct ge_rs232_s* instance);
 	ge_rs232_status_t (*send_byte)(void* context, uint8_t byte,struct ge_rs232_s* instance);
 	void (*got_response)(void* context,struct ge_rs232_s* instance, bool didAck);
@@ -90,4 +94,5 @@ ge_rs232_t ge_rs232_init(ge_rs232_t interface);
 ge_rs232_status_t ge_rs232_receive_byte(ge_rs232_t interface, uint8_t byte);
 ge_rs232_status_t ge_rs232_ready_to_send(ge_rs232_t interface);
 ge_rs232_status_t ge_rs232_send_message(ge_rs232_t interface, const uint8_t* data, uint8_t len);
+ge_rs232_status_t ge_rs232_resend_last_message(ge_rs232_t self);
 

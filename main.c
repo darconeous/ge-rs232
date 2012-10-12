@@ -16,6 +16,7 @@
 
 #define GE_RS232_MAX_ZONES				(96)
 #define GE_RS232_MAX_PARTITIONS			(6)
+#define GE_RS232_MAX_SCHEDULES			(16)
 
 #define GE_RS232_ARMING_LEVEL_ZONE_TEST	(0)
 #define GE_RS232_ARMING_LEVEL_OFF		(1)
@@ -62,26 +63,24 @@ struct ge_zone_s {
 	uint8_t type;
 	uint8_t status;
 
+	time_t last_tripped;
+	uint32_t trip_count;
+
 	char label[16];
 	uint8_t label_len;
 };
 
-struct ge_partition_s {
+struct ge_schedule_s {
 	struct smcp_variable_node_s node;
-
 	uint8_t partition_number;
+	uint8_t area;
 
-	uint8_t arming_level;
-
-	uint16_t armed_by;
-	uint8_t feature_state;
-	uint16_t light_state;
-
-	char label[16];
-	uint8_t label_len;
-
-	char touchpad_lcd[32];
-	uint8_t touchpad_lcd_len;
+	uint8_t schedule_number;
+	uint8_t start_hour;
+	uint8_t start_minute;
+	uint8_t stop_hour;
+	uint8_t stop_minute;
+	uint8_t weekdays;
 };
 
 struct ge_alarm_s {
@@ -93,6 +92,25 @@ struct ge_alarm_s {
 	uint8_t general_type;
 	uint8_t specific_type;
 	uint16_t data;
+	time_t date;
+};
+
+struct ge_partition_s {
+	struct smcp_variable_node_s node;
+
+	uint8_t partition_number;
+
+	uint8_t arming_level;
+	uint16_t armed_by;
+
+	uint8_t feature_state;
+	uint16_t light_state;
+
+	char label[16];
+	uint8_t label_len;
+
+	char touchpad_lcd[32];
+	uint8_t touchpad_lcd_len;
 };
 
 struct ge_system_state_s {
@@ -102,6 +120,7 @@ struct ge_system_state_s {
 
 	struct ge_zone_s zone[GE_RS232_MAX_ZONES];
 	struct ge_partition_s partition[GE_RS232_MAX_PARTITIONS];
+	struct ge_schedule_s schedules[GE_RS232_MAX_SCHEDULES];
 
 	uint8_t zone_count;
 
@@ -175,7 +194,6 @@ void got_panel_response(struct ge_system_state_s* self,struct ge_rs232_s* instan
 ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
 	uint8_t msg[] = {
 		GE_RS232_ATP_EQUIP_LIST_REQUEST,
-		0x03,
 	};
 	return ge_rs232_send_message(interface,msg,sizeof(msg));
 }
@@ -183,7 +201,6 @@ ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
 ge_rs232_status_t dynamic_data_refresh(ge_rs232_t interface) {
 	uint8_t msg[] = {
 		GE_RS232_ATP_DYNAMIC_DATA_REFRESH,
-		0x00,
 	};
 	return ge_rs232_send_message(interface,msg,sizeof(msg));
 }
@@ -219,6 +236,17 @@ ge_rs232_status_t send_keypress(ge_rs232_t interface,uint8_t partition, uint8_t 
 			case 'D':case 'd':code = 0x33;break;
 			case 'E':case 'e':code = 0x2E;break;
 			case 'F':case 'f':code = 0x36;break;
+			case '[':
+				if(keys[1]!=0) {
+					keys++;
+					code = strtol(keys,&keys,16);
+					if(*keys!=']')
+						return -1;
+				}
+				break;
+			default:
+				return -1;
+				break;
 		}
 		if(code==255)
 			continue;
@@ -360,15 +388,38 @@ partition_node_var_func(
 				v = !!(node->feature_state & (1<<4));
 			else if(path==PATH_FS_QUICK_ARM)
 				v = !!(node->feature_state & (1<<5));
+			else
+				ret = SMCP_STATUS_NOT_ALLOWED;
 			sprintf(value,"%d",v);
 		}
 	} else if(action==SMCP_VAR_SET_VALUE) {
 		if(path==PATH_ARM_LEVEL) {
-			ret = SMCP_STATUS_NOT_IMPLEMENTED;
+			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
+			if((node->arming_level)==atoi(value)) {
+				// arm level already set!
+				ret = SMCP_STATUS_OK;
+			} else if(!system_state->interface.got_response) {
+				switch(atoi(value)) {
+					case 1: send_keypress(&system_state->interface,node->partition_number,0,"[20]");break;
+					case 2: send_keypress(&system_state->interface,node->partition_number,0,"[28]");break;
+					case 3: send_keypress(&system_state->interface,node->partition_number,0,"[27]");break;
+					default: return SMCP_STATUS_FAILURE;
+				}
+				ret = smcp_start_async_response(&system_state->async_response);
+				require_noerr(ret,bail);
+				system_state->interface.got_response=(void*)&got_panel_response;
+				ret = SMCP_STATUS_ASYNC_RESPONSE;
+			} else {
+				ret = SMCP_STATUS_FAILURE;
+			}
 		} else if(path==PATH_FS_CHIME) {
 			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
-			if(!system_state->interface.got_response) {
-				toggle_chime(&system_state->interface);
+			if((node->feature_state & (1<<0))==atoi(value)) {
+				// Chime already set!
+				ret = SMCP_STATUS_OK;
+			} else if(!system_state->interface.got_response
+				&& (0== send_keypress(&system_state->interface,node->partition_number,0,"71"))
+			) {
 				ret = smcp_start_async_response(&system_state->async_response);
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
@@ -387,8 +438,9 @@ partition_node_var_func(
 			}
 		} else if(path==PATH_KEYPRESS) {
 			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
-			if(!system_state->interface.got_response) {
-				send_keypress(&system_state->interface,node->partition_number,0,value);
+			if(!system_state->interface.got_response
+				&& (0 == send_keypress(&system_state->interface,node->partition_number,0,value))
+			) {
 				ret = smcp_start_async_response(&system_state->async_response);
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
@@ -561,7 +613,6 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 
 	if(data[0]==GE_RS232_PTA_AUTOMATION_EVENT_LOST) {
 		fprintf(stderr,"[AUTOMATION_EVENT_LOST]");
-/*
 		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
 		if(status != GE_RS232_STATUS_WAIT) {
 			ge_rs232_status_t status = dynamic_data_refresh(interface);
@@ -569,7 +620,6 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 		} else {
 			fprintf(stderr," UNABLE TO SEND REFRESH: NOT READY");
 		}
-*/
 		len=0;
 	} else if(data[0]==GE_RS232_PTA_ZONE_STATUS) {
 		fprintf(stderr,"[ZONE_STATUS]");
@@ -707,6 +757,13 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 	} else if(data[0]==GE_RS232_PTA_CLEAR_AUTOMATION_DYNAMIC_IMAGE) {
 		fprintf(stderr,"[CLEAR_AUTOMATION_DYNAMIC_IMAGE]");
 		len = 0;
+		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
+		if(status != GE_RS232_STATUS_WAIT) {
+			ge_rs232_status_t status = dynamic_data_refresh(interface);
+			fprintf(stderr," refresh send status = %d",status);
+		} else {
+			fprintf(stderr," UNABLE TO SEND REFRESH: NOT READY");
+		}
 
 	} else if(data[0]==GE_RS232_PTA_PANEL_TYPE) {
 		fprintf(stderr,"[PANEL_TYPE]");
@@ -880,7 +937,7 @@ int main(int argc, const char* argv[]) {
 	interface->send_byte = &send_byte;
 	interface->context = (void*)&system_state_node;
 
-	smcp_pairing_init(smcp_get_root_node(smcp),".pairint");
+	smcp_pairing_init(smcp_get_root_node(smcp),".pairing");
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stdin, NULL, _IONBF, 0);
@@ -890,8 +947,8 @@ int main(int argc, const char* argv[]) {
 	if(tcgetattr(fileno(stdin), &t)==0) {
 		cfmakeraw(&t);
 		cfsetspeed(&t, 9600);
-		t.c_cflag = CLOCAL | CREAD | CS8;
-		t.c_iflag = IGNPAR | IGNBRK;
+		t.c_cflag = CLOCAL | CREAD | CS8 | PARENB | PARODD;
+		t.c_iflag = INPCK | IGNBRK;
 		t.c_oflag = 0;
 		t.c_lflag = 0;
 		tcsetattr(fileno(stdin), TCSANOW, &t);
@@ -899,7 +956,7 @@ int main(int argc, const char* argv[]) {
 	if(tcgetattr(fileno(stdout), &t)==0) {
 		cfmakeraw(&t);
 		cfsetspeed(&t, 9600);
-		t.c_cflag = CLOCAL | CREAD | CS8;
+		t.c_cflag = CLOCAL | CREAD | CS8 | PARENB | PARODD;
 		t.c_iflag = IGNPAR | IGNBRK;
 		t.c_oflag = 0;
 		t.c_lflag = 0;
@@ -909,11 +966,7 @@ int main(int argc, const char* argv[]) {
 	// Make sure we at least have the first partition set up.
 	ge_get_partition(&system_state_node,1);
 
-	//refresh_equipment_list(interface);
-	//toggle_chime(interface);
-	//dynamic_data_refresh(interface);
-	//dynamic_data_refresh(interface);
-
+	refresh_equipment_list(interface);
 
 	while(!feof(stdin)) {
 		struct pollfd polltable[2] = {
@@ -941,15 +994,18 @@ int main(int argc, const char* argv[]) {
 			if(status==GE_RS232_STATUS_NAK)
 				fprintf(stderr,"N\n");
 			else if(status==GE_RS232_STATUS_JUNK)
-				fprintf(stderr,"X");
+				fprintf(stderr,"<%02X>",byte);
 			else if(status)
 				fprintf(stderr,"[%d]",status);
 		}
-		if(interface->got_response
-			&& ge_rs232_ready_to_send(interface)==GE_RS232_STATUS_TIMEOUT
+		if(
+			ge_rs232_ready_to_send(interface)==GE_RS232_STATUS_TIMEOUT
 		) {
-			interface->got_response(interface->context,interface,false);
-			//interface->last_response = GE_RS232_NAK;
+			if(interface->output_attempt_count<3) {
+				ge_rs232_resend_last_message(interface);
+			} else if(interface->got_response) {
+				interface->got_response(interface->context,interface,false);
+			}
 		}
 
 		smcp_process(smcp, 0);

@@ -285,10 +285,12 @@ ge_rs232_receive_byte(ge_rs232_t self, uint8_t byte) {
 		self->buffer_sum = 0;
 	} else if(byte == GE_RS232_ACK && !self->last_response) {
 		self->last_response = GE_RS232_ACK;
-		self->got_response(self->context,self,true);
+		if(self->got_response)
+			self->got_response(self->context,self,true);
 	} else if(byte == GE_RS232_NAK && !self->last_response) {
 		self->last_response = GE_RS232_NAK;
-		self->got_response(self->context,self,false);
+		if(self->got_response)
+			self->got_response(self->context,self,false);
 	} else if(self->reading_message) {
 		if(!self->nibble_buffer) {
 			self->nibble_buffer = byte;
@@ -348,6 +350,11 @@ ge_rs232_ready_to_send(ge_rs232_t self) {
 }
 
 ge_rs232_status_t
+ge_rs232_resend_last_message(ge_rs232_t self) {
+	return ge_rs232_send_message(self,self->output_buffer,self->output_buffer_len);
+}
+
+ge_rs232_status_t
 ge_rs232_send_message(ge_rs232_t self, const uint8_t* data, uint8_t len) {
 	ge_rs232_status_t ret = GE_RS232_STATUS_OK;
 	uint8_t checksum = len+1;
@@ -357,12 +364,20 @@ ge_rs232_send_message(ge_rs232_t self, const uint8_t* data, uint8_t len) {
 		goto bail;
 	}
 
-
-	if(self->last_response == 0) {
-		ret = self->send_byte(self->context,'\r',self);
-		if(ret) goto bail;
+	if(data!=self->output_buffer) {
+		memcpy(self->output_buffer,data,len);
+		self->output_buffer_len = len;
+		self->output_attempt_count = 0;
 	}
 
+	self->output_attempt_count++;
+
+	if(self->last_response == 0) {
+		ret = self->send_byte(self->context,0x0D,self);
+		if(ret) goto bail;
+		ret = self->send_byte(self->context,0x0A,self);
+		if(ret) goto bail;
+	}
 
 	self->last_response = 0;
 
