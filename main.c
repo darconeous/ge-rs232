@@ -8,6 +8,9 @@
 #include <smcp/smcp-pairing.h>
 #include <poll.h>
 #include <termios.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <fcntl.h>
 
 #define GE_RS232_ZONE_TYPE_HARDWIRED	(0)
 #define GE_RS232_ZONE_TYPE_RF			(2)
@@ -52,6 +55,65 @@
 #define GE_RS232_ALARM_GENERAL_TYPE_SYSTEM_CONFIG_CHANGE			(17)
 #define GE_RS232_ALARM_GENERAL_TYPE_SYSTEM_EVENT			(18)
 
+#define USE_SYSLOG		1
+
+#if USE_SYSLOG
+#include <syslog.h>
+#endif
+
+#define LOG_LEVEL_EMERGENCY		(0)
+#define LOG_LEVEL_ALERT		(1)
+#define LOG_LEVEL_CRITICAL	(2)
+#define LOG_LEVEL_ERROR		(3)
+#define LOG_LEVEL_WARNING		(4)
+#define LOG_LEVEL_NOTICE		(5)
+#define LOG_LEVEL_INFO		(6)
+#define LOG_LEVEL_DEBUG		(7)
+
+int current_log_level = LOG_LEVEL_INFO;
+
+void log_msg(int level,const char* format, ...) {
+	va_list			ap;
+
+	if(level>current_log_level)
+		return;
+
+	va_start(ap, format);
+
+#if USE_SYSLOG
+	static bool did_start_syslog;
+	if(!did_start_syslog) {
+		openlog("ge-rs232",LOG_PERROR|LOG_CONS,LOG_DAEMON);
+		did_start_syslog = true;
+	}
+	vsyslog(level,format,ap);
+
+#else
+	char* formatted = NULL;
+	struct timeval	tp;
+	gettimeofday(&tp, NULL);
+	vasprintf(&formatted, format, ap);
+
+	if(formatted) {
+		struct tm tmv;
+
+		localtime_r((time_t *)&(tp.tv_sec), &tmv);
+
+		fprintf(stderr,"[%d] %04d-%02d-%02d %02d:%02d:%02d%s %s\n",
+			level,
+			tmv.tm_year+1900,
+			tmv.tm_mon,
+			tmv.tm_mday,
+			tmv.tm_hour,
+			tmv.tm_min,
+			tmv.tm_sec,
+			tmv.tm_zone,
+			formatted
+		);
+		free(formatted);
+	}
+#endif
+}
 
 struct ge_zone_s {
 	struct smcp_variable_node_s node;
@@ -191,6 +253,39 @@ void got_panel_response(struct ge_system_state_s* self,struct ge_rs232_s* instan
 
 }
 
+const char* ge_text_to_ascii_one_line(const char* bytes, uint8_t len) {
+	static char ret[1024];
+	ret[0] = 0;
+	while(len--) {
+		const char* str = ge_rs232_text_token_lookup[*bytes++];
+		if(str) {
+			if(str[0]=='\n') {
+				if(len)
+					strlcat(ret," | ",sizeof(ret));
+			} else {
+				strlcat(ret,str,sizeof(ret));
+			}
+		} else {
+			strlcat(ret,"?",sizeof(ret));
+		}
+	}
+	return ret;
+}
+
+const char* ge_text_to_ascii(const char* bytes, uint8_t len) {
+	static char ret[1024];
+	ret[0] = 0;
+	while(len--) {
+		const char* str = ge_rs232_text_token_lookup[*bytes++];
+		if(str) {
+			strlcat(ret,str,sizeof(ret));
+		} else {
+			strlcat(ret,"?",sizeof(ret));
+		}
+	}
+	return ret;
+}
+
 ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
 	uint8_t msg[] = {
 		GE_RS232_ATP_EQUIP_LIST_REQUEST,
@@ -255,17 +350,6 @@ ge_rs232_status_t send_keypress(ge_rs232_t interface,uint8_t partition, uint8_t 
 	return ge_rs232_send_message(interface,msg,len);
 }
 
-ge_rs232_status_t toggle_chime(ge_rs232_t interface) {
-	uint8_t msg[] = {
-		GE_RS232_ATP_KEYPRESS,
-		0x01,	// Partition
-		0x00,	// Area
-		0x07,	// Keypad "7"
-		0x01,	// Keypad "1"
-	};
-	return ge_rs232_send_message(interface,msg,sizeof(msg));
-}
-
 static smcp_status_t
 partition_node_var_func(
 	struct ge_partition_s *node,
@@ -273,23 +357,6 @@ partition_node_var_func(
 	uint8_t path,
 	char* value
 ) {
-/*
-	uint8_t partition;
-
-	uint8_t arming_level;
-
-	uint16_t armed_by;
-	uint8_t feature_state;
-	uint16_t light_state;
-
-	char label[16];
-	uint8_t label_len;
-
-	char touchpad_lcd[32];
-	uint8_t touchpad_lcd_len;
-*/
-
-
 	smcp_status_t ret = 0;
 	enum {
 		PATH_ARM_LEVEL=0,
@@ -586,6 +653,7 @@ ge_get_partition(struct ge_system_state_s *node,int partitioni) {
 }
 
 
+
 ge_rs232_status_t
 received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t len,struct ge_rs232_s* interface) {
 
@@ -612,17 +680,16 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 	last_msg_len = len;
 
 	if(data[0]==GE_RS232_PTA_AUTOMATION_EVENT_LOST) {
-		fprintf(stderr,"[AUTOMATION_EVENT_LOST]");
+		log_msg(LOG_LEVEL_NOTICE,"[AUTOMATION_EVENT_LOST]");
 		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
 		if(status != GE_RS232_STATUS_WAIT) {
 			ge_rs232_status_t status = dynamic_data_refresh(interface);
-			fprintf(stderr," refresh send status = %d",status);
 		} else {
-			fprintf(stderr," UNABLE TO SEND REFRESH: NOT READY");
+			log_msg(LOG_LEVEL_ERROR,"UNABLE TO SEND REFRESH: NOT READY");
 		}
 		len=0;
+		return 0;
 	} else if(data[0]==GE_RS232_PTA_ZONE_STATUS) {
-		fprintf(stderr,"[ZONE_STATUS]");
 		int zonei = (data[3]<<8)+data[4];
 
 		struct ge_zone_s* zone = ge_get_zone(node,zonei);
@@ -661,22 +728,20 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 			zone->partition = data[1];
 			zone->area = data[2];
 			zone->status = data[5];
+			log_msg(LOG_LEVEL_NOTICE,"[ZONE_STATUS] ZONE:%02d STATUS:%s%s%s%s%s TEXT:\"%s\"",
+				zonei,
+				data[5]&GE_RS232_ZONE_STATUS_TRIPPED?"T":"-",
+				data[5]&GE_RS232_ZONE_STATUS_FAULT?"F":"-",
+				data[5]&GE_RS232_ZONE_STATUS_ALARM?"A":"-",
+				data[5]&GE_RS232_ZONE_STATUS_TROUBLE?"R":"-",
+				data[5]&GE_RS232_ZONE_STATUS_BYPASSED?"B":"-",
+				ge_text_to_ascii_one_line(zone->label,zone->label_len)
+			);
 		}
 
-		fprintf(stderr," PN:%d AREA:%d ZONE:%d STATUS:",data[1],data[2],zonei);
-		if(data[5]&GE_RS232_ZONE_STATUS_TRIPPED)
-			fprintf(stderr,"[TRIPPED]");
-		if(data[5]&GE_RS232_ZONE_STATUS_FAULT)
-			fprintf(stderr,"[FAULT]");
-		if(data[5]&GE_RS232_ZONE_STATUS_ALARM)
-			fprintf(stderr,"[ALARM]");
-		if(data[5]&GE_RS232_ZONE_STATUS_TROUBLE)
-			fprintf(stderr,"[TROUBLE]");
-		if(data[5]&GE_RS232_ZONE_STATUS_BYPASSED)
-			fprintf(stderr,"[BYPASSED]");
+		return 0;
 		len = 0;
 	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_ZONE_DATA) {
-		fprintf(stderr,"[EQUIP_LIST_ZONE_DATA]");
 		uint16_t zonei = (data[4]<<8)+data[5];
 		struct ge_zone_s* zone = ge_get_zone(node,zonei);
 
@@ -724,58 +789,37 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 			memcpy(zone->label,data+8,len-8);
 		}
 
-		fprintf(stderr," PN:%d AREA:%d ZONE:%d TYPE:%d GROUP:%d STATUS:",data[1],data[2],zonei,data[6],data[3]);
-		if(data[7]&GE_RS232_ZONE_STATUS_TRIPPED)
-			fprintf(stderr,"[TRIPPED]");
-		if(data[7]&GE_RS232_ZONE_STATUS_FAULT)
-			fprintf(stderr,"[FAULT]");
-		if(data[7]&GE_RS232_ZONE_STATUS_ALARM)
-			fprintf(stderr,"[ALARM]");
-		if(data[7]&GE_RS232_ZONE_STATUS_TROUBLE)
-			fprintf(stderr,"[TROUBLE]");
-		if(data[7]&GE_RS232_ZONE_STATUS_BYPASSED)
-			fprintf(stderr,"[BYPASSED]");
-		fprintf(stderr," TEXT:\"");
-		len-=8;
-		data+=8;
-		while(len--) {
-			const char* str = ge_rs232_text_token_lookup[*data++];
-			if(str) {
-				if(str[0]=='\n') {
-					if(len)
-						fprintf(stderr," | ");
-				} else {
-					fprintf(stderr,"%s",str);
-				}
-			} else {
-				fprintf(stderr,"\\x%02x",data[-1]);
-			}
-		}
-		len=0;
-		fprintf(stderr,"\"");
+		log_msg(LOG_LEVEL_NOTICE,"[ZONE_INFO] ZONE:%d PN:%d AREA:%d TYPE:%d GROUP:%d STATUS:%s%s%s%s%s TEXT:\"%s\"",
+			zonei,
+			data[1],
+			data[2],
+			data[6],
+			data[3],
+			data[7]&GE_RS232_ZONE_STATUS_TRIPPED?"T":"-",
+			data[7]&GE_RS232_ZONE_STATUS_FAULT?"F":"-",
+			data[7]&GE_RS232_ZONE_STATUS_ALARM?"A":"-",
+			data[7]&GE_RS232_ZONE_STATUS_TROUBLE?"R":"-",
+			data[7]&GE_RS232_ZONE_STATUS_BYPASSED?"B":"-",
+			ge_text_to_ascii_one_line(data+8,len-8)
 
-	} else if(data[0]==GE_RS232_PTA_CLEAR_AUTOMATION_DYNAMIC_IMAGE) {
-		fprintf(stderr,"[CLEAR_AUTOMATION_DYNAMIC_IMAGE]");
+		);
+		return 0;
 		len = 0;
+	} else if(data[0]==GE_RS232_PTA_CLEAR_AUTOMATION_DYNAMIC_IMAGE) {
+		log_msg(LOG_LEVEL_NOTICE,"[CLEAR_AUTOMATION_DYNAMIC_IMAGE]");
 		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
 		if(status != GE_RS232_STATUS_WAIT) {
 			ge_rs232_status_t status = dynamic_data_refresh(interface);
-			fprintf(stderr," refresh send status = %d",status);
 		} else {
-			fprintf(stderr," UNABLE TO SEND REFRESH: NOT READY");
+			log_msg(LOG_LEVEL_WARNING,"Unable to send refresh, not ready.");
 		}
+		return 0;
 
 	} else if(data[0]==GE_RS232_PTA_PANEL_TYPE) {
-		fprintf(stderr,"[PANEL_TYPE]");
-		/*
-		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
-		if(status != GE_RS232_STATUS_WAIT) {
-			ge_rs232_status_t status = refresh_equipment_list(interface);
-			fprintf(stderr," refresh send status = %d",status);
-		} else {
-			fprintf(stderr," UNABLE TO SEND REFRESH: NOT READY");
-		}
-		*/
+		log_msg(LOG_LEVEL_INFO,
+			"[PANEL_TYPE]"
+		);
+		return 0;
 	} else if(data[0]==GE_RS232_PTA_SUBCMD) {
 		char *str = NULL;
 		switch(data[1]) {
@@ -788,17 +832,26 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 					partition->armed_by = (data[4]<<8)+(data[5]);
 				}
 				}
-				fprintf(stderr,"[ARMING_LEVEL]");
-				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
-				fprintf(stderr," UNh:%d UNl:%d AL:%d",data[4],data[5],data[6]);
+				log_msg(LOG_LEVEL_NOTICE,
+					"[ARMING_LEVEL] PN:%d AREA:%d USER:%d LEVEL:%d",
+					data[2],
+					data[3],
+					(data[4]<<8)+data[5],
+					data[6]
+				);
+				return 0;
 				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_ALARM_TROUBLE:
-				fprintf(stderr,"[ALARM/TROUBLE]");
-				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
-				fprintf(stderr," ST:%d",data[4]);
-				fprintf(stderr," ZONE:%d",data[7]);
-				fprintf(stderr," ALARM:%d.%d",data[8],data[9]);
+				log_msg(LOG_LEVEL_ALERT,
+					"[ALARM/TROUBLE] PN:%d AREA:%d ST:%d ZONE:%d ALARM:%d.%d",
+					data[2],
+					data[3],
+					data[4],
+					(data[6]<<8)+data[7],
+					data[8],
+					data[9]
+				);
 				switch(data[8]) {
 					case 1: // General Alarm
 					case 2: // Alarm Canceled
@@ -812,31 +865,42 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 					system(str);
 					free(str);
 				}
+				return 0;
 				break;
 			case GE_RS232_PTA_SUBCMD_ENTRY_EXIT_DELAY:
-				fprintf(stderr,"[EXIT_DELAY]");
-				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
+				log_msg(LOG_LEVEL_INFO,
+					"[EXIT_DELAY] PN:%d AREA:%d",
+					data[2],
+					data[3]
+				);
+				return 0;
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_SETUP:
-				fprintf(stderr,"[SIREN_SETUP]");
-				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
+				log_msg(LOG_LEVEL_INFO,
+					"[SIREN_SETUP] PN:%d AREA:%d",
+					data[2],
+					data[3]
+				);
+				return 0;
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_SYNC:
+				log_msg(LOG_LEVEL_DEBUG,
+					"[SIREN_SYNC]"
+				);
+				return 0;
 //				fprintf(stderr,"[SIREN_SYNC]");
 				return GE_RS232_STATUS_OK;
 				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_GO:
-				fprintf(stderr,"[SIREN_GO]");
-				len=0;
+				log_msg(LOG_LEVEL_DEBUG,
+					"[SIREN_GO]"
+				);
+				return 0;
 				break;
 			case GE_RS232_PTA_SUBCMD_TOUCHPAD_DISPLAY:
 				//if(data[2]!=1)
 				//	return GE_RS232_STATUS_OK;
-
-				fprintf(stderr,"[TOUCHPAD_DISPLAY]");
-				fprintf(stderr," PN:%d AN:%d",data[2],data[3]);
-				fprintf(stderr," MT:%d MSG:\"",data[4]);
 
 				{
 				int partitioni = data[2];
@@ -848,33 +912,31 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 						"touchpad_text"
 					);
 
-					len-=5;
-					data+=5;
-
-					partition->touchpad_lcd_len = len;
-					memcpy(partition->touchpad_lcd,data,len);
-
-					while(len--) {
-						const char* str = ge_rs232_text_token_lookup[*data++];
-						if(str) {
-							if(str[0]=='\n') {
-								if(len)
-									fprintf(stderr," | ");
-							} else {
-								fprintf(stderr,"%s",str);
-							}
-						} else {
-							fprintf(stderr,"\\x%02x",data[-1]);
-						}
+					if(len-5!=partition->touchpad_lcd_len
+						|| 0!=memcmp(data+5,partition->touchpad_lcd,len-5)
+					) {
+						log_msg((data[2]==1)?LOG_LEVEL_INFO:LOG_LEVEL_DEBUG,
+							"[TOUCHPAD_DISPLAY] PN:%d AREA:%d MT:%d MSG:\"%s\"",
+							data[2],
+							data[3],
+							data[4],
+							ge_text_to_ascii_one_line(data+5,len-5)
+						);
 					}
-					len=0;
-					fprintf(stderr,"\"");
+
+					partition->touchpad_lcd_len = len-5;
+					memcpy(partition->touchpad_lcd,data+5,len-5);
 				}
 				}
+				return 0;
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_STOP:
+				log_msg(LOG_LEVEL_DEBUG,
+					"[SIREN_STOP]"
+				);
 //				fprintf(stderr,"[SIREN_STOP]");
 				len=0;
+				return 0;
 				break;
 			case GE_RS232_PTA_SUBCMD_FEATURE_STATE:
 				{
@@ -883,26 +945,33 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				if(partition) {
 					partition->feature_state = data[4];
 				}
+				log_msg(LOG_LEVEL_DEBUG,
+					"[FEATURE_STATE] PN:%d",
+					partitioni
+				);
 				}
-				fprintf(stderr,"[FEATURE_STATE]");
+				return 0;
 				break;
+/*
 			case GE_RS232_PTA_SUBCMD_TEMPERATURE:
 				fprintf(stderr,"[TEMPERATURE]");
 				break;
 			case GE_RS232_PTA_SUBCMD_TIME_AND_DATE:
 				fprintf(stderr,"[TIME_AND_DATE]");
 				break;
+*/
 		}
 	}
 
+
 	if(len) {
-		fprintf(stderr," { ");
+		char data_str[64*3];
+		int strlen = 0;
 		while(len--) {
-			fprintf(stderr,"%02X ",*data++);
+			strlen+=snprintf(data_str+strlen,sizeof(data_str)-strlen,"%02X ",*data++);
 		}
-		fprintf(stderr,"}");
+		log_msg(LOG_LEVEL_DEBUG,"[OTHER] { %s}",data_str);
 	}
-	fprintf(stderr,"\n");
 
 	return GE_RS232_STATUS_OK;
 }
@@ -930,7 +999,7 @@ int main(int argc, const char* argv[]) {
 
 	smcp_node_init(&system_state_node.node, smcp_get_root_node(smcp), "security");
 
-	fprintf(stderr,"Listening on port %d.\n",smcp_get_port(smcp));
+	log_msg(LOG_LEVEL_NOTICE,"Listening on port %d.",smcp_get_port(smcp));
 
 	ge_rs232_t interface = ge_rs232_init(&system_state_node.interface);
 	interface->received_message = (void*)&received_message;
@@ -938,6 +1007,21 @@ int main(int argc, const char* argv[]) {
 	interface->context = (void*)&system_state_node;
 
 	smcp_pairing_init(smcp_get_root_node(smcp),".pairing");
+
+	if(argc>1) {
+		const char* device = argv[1];
+		int fd = -1;
+		log_msg(LOG_LEVEL_NOTICE,"Opening \"%s\" . . .",device);
+		fd = open(device,O_RDWR | O_NOCTTY | O_NDELAY);
+		if(fd<0) {
+			log_msg(LOG_LEVEL_CRITICAL,"Unable to open \"%s\"!",device);
+			return -1;
+		}
+		stdin = fdopen(fd,"r");
+		stdout = fdopen(fd,"w");
+	} else {
+		log_msg(LOG_LEVEL_WARNING,"Device not specified, using stdin/stdout.");
+	}
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stdin, NULL, _IONBF, 0);
@@ -983,20 +1067,14 @@ int main(int argc, const char* argv[]) {
 			char byte = fgetc(stdin);
 
 			if(byte==GE_RS232_NAK) {
-				fprintf(stderr,"GOT NAK\n");
+				log_msg(LOG_LEVEL_WARNING,"GOT NAK");
 			}
 
 			if(byte==GE_RS232_ACK) {
-				fprintf(stderr,"GOT ACK\n");
+				log_msg(LOG_LEVEL_DEBUG,"GOT ACK");
 			}
 			status = ge_rs232_receive_byte(interface,byte);
 
-			if(status==GE_RS232_STATUS_NAK)
-				fprintf(stderr,"N\n");
-			else if(status==GE_RS232_STATUS_JUNK)
-				fprintf(stderr,"<%02X>",byte);
-			else if(status)
-				fprintf(stderr,"[%d]",status);
 		}
 		if(
 			ge_rs232_ready_to_send(interface)==GE_RS232_STATUS_TIMEOUT
