@@ -1026,6 +1026,14 @@ int main(int argc, const char* argv[]) {
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stdin, NULL, _IONBF, 0);
 
+	smcp_pair_with_uri(
+		smcp,
+		"/zone-5/zs.tripped",
+		"/p-1/keypress?v=[10]",
+		0,
+		NULL
+	);
+
 	int r;
 	struct termios t;
 	if(tcgetattr(fileno(stdin), &t)==0) {
