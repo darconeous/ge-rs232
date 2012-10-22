@@ -335,11 +335,14 @@ ge_rs232_status_t send_keypress(ge_rs232_t interface,uint8_t partition, uint8_t 
 				if(keys[1]!=0) {
 					keys++;
 					code = strtol(keys,&keys,16);
-					if(*keys!=']')
+					if(*keys!=']') {
+						log_msg(LOG_LEVEL_WARNING,"send_keypress: '[' without ']'");
 						return -1;
+					}
 				}
 				break;
 			default:
+				log_msg(LOG_LEVEL_WARNING,"send_keypress: bad key code %d '%c'",*keys,*keys);
 				return -1;
 				break;
 		}
@@ -470,13 +473,17 @@ partition_node_var_func(
 					case 1: send_keypress(&system_state->interface,node->partition_number,0,"[20]");break;
 					case 2: send_keypress(&system_state->interface,node->partition_number,0,"[28]");break;
 					case 3: send_keypress(&system_state->interface,node->partition_number,0,"[27]");break;
-					default: return SMCP_STATUS_FAILURE;
+					default:
+						log_msg(LOG_LEVEL_WARNING,"Bad arming level \"%s\"",value);
+						return SMCP_STATUS_FAILURE;
 				}
 				ret = smcp_start_async_response(&system_state->async_response);
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
 			} else {
+				smcp_outbound_drop();
+				log_msg(LOG_LEVEL_WARNING,"Too busy to set arming level. Dropping packet.");
 				ret = SMCP_STATUS_FAILURE;
 			}
 		} else if(path==PATH_FS_CHIME) {
@@ -492,6 +499,8 @@ partition_node_var_func(
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
 			} else {
+				log_msg(LOG_LEVEL_WARNING,"Too busy to set chime. Dropping packet.");
+				smcp_outbound_drop();
 				ret = SMCP_STATUS_FAILURE;
 			}
 		} else if(path==PATH_REFRESH_EQUIPMENT) {
@@ -513,6 +522,8 @@ partition_node_var_func(
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
 			} else {
+				log_msg(LOG_LEVEL_WARNING,"Too busy to send keypresses. Dropping packet.");
+				smcp_outbound_drop();
 				ret = SMCP_STATUS_FAILURE;
 			}
 		} else if(path==PATH_DDR) {
@@ -524,6 +535,8 @@ partition_node_var_func(
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
 			} else {
+				log_msg(LOG_LEVEL_WARNING,"Too busy to send dynamic data refresh. Dropping packet.");
+				smcp_outbound_drop();
 				ret = SMCP_STATUS_FAILURE;
 			}
 		} else {
@@ -568,7 +581,7 @@ zone_node_var_func(
 			"gn",
 			"zt",
 			"text",
-			"zs.trip",
+			"zs.tripped",
 			"zs.fault",
 			"zs.alarm",
 			"zs.trouble",
@@ -695,12 +708,18 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 		struct ge_zone_s* zone = ge_get_zone(node,zonei);
 
 		if(zone) {
-			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TRIPPED)
+			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TRIPPED) {
 				smcp_trigger_event_with_node(
 					smcp_node_get_root((smcp_node_t)node),
 					&zone->node.node,
 					"zs.tripped"
 				);
+				smcp_trigger_event_with_node(
+					smcp_node_get_root((smcp_node_t)node),
+					&zone->node.node,
+					(data[5]&GE_RS232_ZONE_STATUS_TRIPPED)?"zs.tripped!v=1":"zs.tripped!v=0"
+				);
+			}
 			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_FAULT)
 				smcp_trigger_event_with_node(
 					smcp_node_get_root((smcp_node_t)node),
@@ -1006,7 +1025,7 @@ int main(int argc, const char* argv[]) {
 	interface->send_byte = &send_byte;
 	interface->context = (void*)&system_state_node;
 
-	smcp_pairing_init(smcp_get_root_node(smcp),".pairing");
+	smcp_pairing_init(smcp_get_root_node(smcp),SMCP_PAIRING_DEFAULT_ROOT_PATH);
 
 	if(argc>1) {
 		const char* device = argv[1];
@@ -1026,13 +1045,17 @@ int main(int argc, const char* argv[]) {
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stdin, NULL, _IONBF, 0);
 
+	/*
 	smcp_pair_with_uri(
 		smcp,
-		"/zone-5/zs.tripped",
-		"/p-1/keypress?v=[10]",
-		0,
+		"security/zone-5/zs.tripped",
+		//"coap://localhost/security/p-1/keypress?v=[10]0",
+		"/security/p-1/keypress?v=[10]0",
+		SMCP_PARING_FLAG_RELIABILITY_PART,
 		NULL
 	);
+	*/
+	smcp_set_proxy_url(smcp,"coap://bellatrix.orion.deepdarc.com/proxy");
 
 	int r;
 	struct termios t;

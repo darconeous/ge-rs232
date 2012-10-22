@@ -10,6 +10,7 @@ SMCP_SOURCE_PATH=../smcp/src/smcp
 SMCP_SOURCE_FILES=smcp.c smcp-list.c smcp-send.c smcp-node.c smcp-pairing.c btree.c url-helpers.c coap.c smcp-timer.c smcp-timer_node.c smcp-variable_node.c
 SMCP_OBJECT_FILES=${addprefix $(SMCP_SOURCE_PATH)/,${subst .c,.o,$(SMCP_SOURCE_FILES)}}
 
+CFLAGS+=-DASSERT_MACROS_USE_SYSLOG=1
 
 ifdef VERBOSE_DEBUG
 CFLAGS+=-DVERBOSE_DEBUG=$(VERBOSE_DEBUG)
