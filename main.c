@@ -477,7 +477,7 @@ partition_node_var_func(
 						log_msg(LOG_LEVEL_WARNING,"Bad arming level \"%s\"",value);
 						return SMCP_STATUS_FAILURE;
 				}
-				ret = smcp_start_async_response(&system_state->async_response);
+				ret = smcp_start_async_response(&system_state->async_response,0);
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
@@ -494,7 +494,7 @@ partition_node_var_func(
 			} else if(!system_state->interface.got_response
 				&& (0== send_keypress(&system_state->interface,node->partition_number,0,"71"))
 			) {
-				ret = smcp_start_async_response(&system_state->async_response);
+				ret = smcp_start_async_response(&system_state->async_response,0);
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
@@ -507,7 +507,7 @@ partition_node_var_func(
 			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
 			if(!system_state->interface.got_response) {
 				refresh_equipment_list(&system_state->interface);
-				ret = smcp_start_async_response(&system_state->async_response);
+				ret = smcp_start_async_response(&system_state->async_response,0);
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
@@ -517,7 +517,7 @@ partition_node_var_func(
 			if(!system_state->interface.got_response
 				&& (0 == send_keypress(&system_state->interface,node->partition_number,0,value))
 			) {
-				ret = smcp_start_async_response(&system_state->async_response);
+				ret = smcp_start_async_response(&system_state->async_response,0);
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
@@ -530,7 +530,7 @@ partition_node_var_func(
 			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
 			if(!system_state->interface.got_response) {
 				dynamic_data_refresh(&system_state->interface);
-				ret = smcp_start_async_response(&system_state->async_response);
+				ret = smcp_start_async_response(&system_state->async_response,0);
 				require_noerr(ret,bail);
 				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
@@ -928,7 +928,7 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 					smcp_trigger_event_with_node(
 						smcp_node_get_root((smcp_node_t)node),
 						&partition->node.node,
-						"touchpad_text"
+						"touchpad-text"
 					);
 
 					if(len-5!=partition->touchpad_lcd_len
