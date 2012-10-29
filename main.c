@@ -370,20 +370,21 @@ partition_node_var_func(
 		PATH_FS_LATCHKEY,
 		PATH_FS_SILENT_ARMING,
 		PATH_FS_QUICK_ARM,
-		PATH_TEXT,
+//		PATH_TEXT,
 		PATH_TOUCHPAD_TEXT,
 		PATH_KEYPRESS,
 		PATH_REFRESH_EQUIPMENT,
 		PATH_DDR,
-//		PATH_LIGHT_1,
-//		PATH_LIGHT_2,
-//		PATH_LIGHT_3,
-//		PATH_LIGHT_4,
-//		PATH_LIGHT_5,
-//		PATH_LIGHT_6,
-//		PATH_LIGHT_7,
-//		PATH_LIGHT_8,
-//		PATH_LIGHT_9,
+		PATH_LIGHT_ALL,
+		PATH_LIGHT_1,
+		PATH_LIGHT_2,
+		PATH_LIGHT_3,
+		PATH_LIGHT_4,
+		PATH_LIGHT_5,
+		PATH_LIGHT_6,
+		PATH_LIGHT_7,
+		PATH_LIGHT_8,
+		PATH_LIGHT_9,
 
 		PATH_COUNT,
 	};
@@ -400,11 +401,12 @@ partition_node_var_func(
 			"latchkey",
 			"silent-arming",
 			"quick-arm",
-			"text",
+//			"text",
 			"touchpad-text",
 			"keypress",
 			"refresh-equipment",
 			"ddr",
+			"light-all",
 			"light-1",
 			"light-2",
 			"light-3",
@@ -416,19 +418,52 @@ partition_node_var_func(
 			"light-9",
 		};
 		strcpy(value,path_names[path]);
-	} else if(action==SMCP_VAR_GET_VALUE) {
-		if(path==PATH_TEXT) {
-			// Just send the ascii for now.
-			int i = 0;
-			value[0]=0;
-			for(;i<node->label_len;i++) {
-				const char* str = ge_rs232_text_token_lookup[node->label[i]];
-
-				if(str) {
-					strlcat(value,str,SMCP_VARIABLE_MAX_VALUE_LENGTH);
-				}
+	} else if(action==SMCP_VAR_GET_LF_TITLE) {
+		if(path==PATH_ARM_LEVEL) {
+			const char *arm_level[] = {
+				[0]="ZONE-TEST",
+				[1]="DISARMED",
+				[2]="STAY",
+				[3]="AWAY",
+				[4]="NIGHT",
+				[5]="SILENT",
+			};
+			if(node->arming_level<sizeof(arm_level)/sizeof(*arm_level)-1) {
+				strncpy(value,arm_level[node->arming_level],SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else {
+				ret = SMCP_STATUS_NOT_ALLOWED;
 			}
-		} else if(path==PATH_TOUCHPAD_TEXT) {
+		} else if(path==PATH_ARMED_BY) {
+			if(node->armed_by>=230 && node->armed_by<=237) {
+				strncpy(value,"PARTITION-MASTER-CODE",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by>=238 && node->armed_by<=245) {
+				strncpy(value,"DURESS-CODE",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==246) {
+				strncpy(value,"SYSTEM-CODE",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==247) {
+				strncpy(value,"INSTALLER",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==248) {
+				strncpy(value,"DEALER",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==249) {
+				strncpy(value,"AVM-CODE",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==250) {
+				strncpy(value,"QUICK-ARM",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==251) {
+				strncpy(value,"KEY-SWITCH",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==252) {
+				strncpy(value,"SYSTEM",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==255) {
+				strncpy(value,"AUTOMATION",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else if(node->armed_by==65535) {
+				strncpy(value,"SYSTEM/KEY-SWITCH",SMCP_VARIABLE_MAX_VALUE_LENGTH);
+			} else {
+				snprintf(value,SMCP_VARIABLE_MAX_VALUE_LENGTH,"USER-%d",node->armed_by);
+			}
+		} else {
+			ret = SMCP_STATUS_NOT_ALLOWED;
+		}
+	} else if(action==SMCP_VAR_GET_VALUE) {
+		if(path==PATH_TOUCHPAD_TEXT) {
 			// Just send the ascii for now.
 			int i = 0;
 			value[0]=0;
@@ -439,11 +474,26 @@ partition_node_var_func(
 					strlcat(value,str,SMCP_VARIABLE_MAX_VALUE_LENGTH);
 				}
 			}
+/*
+		} else if(path==PATH_TEXT) {
+			// Just send the ascii for now.
+			int i = 0;
+			value[0]=0;
+			for(;i<node->label_len;i++) {
+				const char* str = ge_rs232_text_token_lookup[node->label[i]];
+
+				if(str) {
+					strlcat(value,str,SMCP_VARIABLE_MAX_VALUE_LENGTH);
+				}
+			}
+*/
 		} else {
 			int v = 0;
 
 			if(path==PATH_ARM_LEVEL)
 				v = node->arming_level;
+			else if(path>=PATH_LIGHT_ALL && path<=PATH_LIGHT_9)
+				v = !!(node->light_state & (1<<(path-PATH_LIGHT_ALL)));
 			else if(path==PATH_ARMED_BY)
 				v = node->armed_by;
 			else if(path==PATH_FS_CHIME)
@@ -484,6 +534,24 @@ partition_node_var_func(
 			} else {
 				smcp_outbound_drop();
 				log_msg(LOG_LEVEL_WARNING,"Too busy to set arming level. Dropping packet.");
+				ret = SMCP_STATUS_FAILURE;
+			}
+		} else if(path>=PATH_LIGHT_ALL && path<=PATH_LIGHT_9) {
+			struct ge_system_state_s* system_state=(struct ge_system_state_s*)node->node.node.parent;
+			char cmd[] = { '[','1','1'-!!atoi(value),']','0'+path-PATH_LIGHT_ALL,0};
+			if(!!(node->light_state & (1<<(path-PATH_LIGHT_ALL)))==atoi(value)) {
+				// Light already set!
+				ret = SMCP_STATUS_OK;
+			} else if(!system_state->interface.got_response
+				&& (0== send_keypress(&system_state->interface,node->partition_number,0,cmd))
+			) {
+				ret = smcp_start_async_response(&system_state->async_response,0);
+				require_noerr(ret,bail);
+				system_state->interface.got_response=(void*)&got_panel_response;
+				ret = SMCP_STATUS_ASYNC_RESPONSE;
+			} else {
+				log_msg(LOG_LEVEL_WARNING,"Too busy to change light. Dropping packet.");
+				smcp_outbound_drop();
 				ret = SMCP_STATUS_FAILURE;
 			}
 		} else if(path==PATH_FS_CHIME) {
@@ -863,11 +931,12 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				break;
 			case GE_RS232_PTA_SUBCMD_ALARM_TROUBLE:
 				log_msg(LOG_LEVEL_ALERT,
-					"[ALARM/TROUBLE] PN:%d AREA:%d ST:%d ZONE:%d ALARM:%d.%d",
+					data[5]?"[ALARM/TROUBLE] PN:%d AREA:%d ST:%d UNIT-ID:0x%06x ALARM:%d.%d"
+					:"[ALARM/TROUBLE] PN:%d AREA:%d ST:%d ZONE:%d ALARM:%d.%d",
 					data[2],
 					data[3],
 					data[4],
-					(data[6]<<8)+data[7],
+					(data[5]<<16)+(data[6]<<8)+data[7],
 					data[8],
 					data[9]
 				);
@@ -971,14 +1040,135 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				}
 				return 0;
 				break;
-/*
 			case GE_RS232_PTA_SUBCMD_TEMPERATURE:
-				fprintf(stderr,"[TEMPERATURE]");
+				log_msg(LOG_LEVEL_INFO,
+					"[TEMPERATURE] PN:%d AREA:%d CUR:%d°F LOW:%d°f HIGH:%d°F",
+					data[2],
+					data[3],
+					data[4],
+					data[5]
+				);
+				len=0;
 				break;
 			case GE_RS232_PTA_SUBCMD_TIME_AND_DATE:
-				fprintf(stderr,"[TIME_AND_DATE]");
+				log_msg(LOG_LEVEL_INFO,
+					"[TIME_AND_DATE] %04d-%02d-%02d %02d:%02d",
+					data[6]+2000,
+					data[4],
+					data[5],
+					data[2],
+					data[3]
+				);
+				len=0;
 				break;
-*/
+		}
+	} else if(data[0]==GE_RS232_PTA_SUBCMD2) {
+		char *str = NULL;
+		switch(data[1]) {
+			case GE_RS232_PTA_SUBCMD2_LIGHTS_STATE:
+				log_msg(LOG_LEVEL_INFO,
+					"[LIGHTS_STATE] PN:%d AREA:%d STATE:%d%d%d%d%d%d%d%d%d",
+					data[2],
+					data[3],
+					!!(data[4]&(1<<0)),
+					!!(data[4]&(1<<1)),
+					!!(data[4]&(1<<2)),
+					!!(data[4]&(1<<3)),
+					!!(data[4]&(1<<4)),
+					!!(data[4]&(1<<5)),
+					!!(data[4]&(1<<6)),
+					!!(data[4]&(1<<7)),
+					!!(data[5]&(1<<0)),
+					!!(data[5]&(1<<1))
+				);
+				int partitioni = data[2];
+				struct ge_partition_s* partition = ge_get_partition(node,partitioni);
+				if(partition) {
+					if((partition->light_state^data[4])&(1<<0))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-all"
+						);
+					if((partition->light_state^data[4])&(1<<1))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-1"
+						);
+					if((partition->light_state^data[4])&(1<<2))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-2"
+						);
+					if((partition->light_state^data[4])&(1<<3))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-3"
+						);
+					if((partition->light_state^data[4])&(1<<4))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-4"
+						);
+					if((partition->light_state^data[4])&(1<<5))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-5"
+						);
+					if((partition->light_state^data[4])&(1<<6))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-6"
+						);
+					if((partition->light_state^data[4])&(1<<7))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-7"
+						);
+					if(((partition->light_state>>8)^data[5])&(1<<0))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-8"
+						);
+					if(((partition->light_state>>8)^data[5])&(1<<1))
+						smcp_trigger_event_with_node(
+							smcp_node_get_root((smcp_node_t)node),
+							&partition->node.node,
+							"light-9"
+						);
+					partition->light_state = data[4]+(data[5]<<8);
+				}
+				len=0;
+				break;
+			case GE_RS232_PTA_SUBCMD2_USER_LIGHTS:
+				log_msg(LOG_LEVEL_INFO,
+					data[5]?"[USER_LIGHTS] PN:%d AREA:%d ST:%d UNIT-ID:0x%06x LIGHT:%d STATE:%d"
+					:"[USER_LIGHTS] PN:%d AREA:%d ST:%d ZONE:%d LIGHT:%d STATE:%d",
+					data[2],
+					data[3],
+					data[4],
+					(data[5]<<16)+(data[6]<<8)+data[7],
+					data[8],
+					data[9]
+				);
+				break;
+			case GE_RS232_PTA_SUBCMD2_KEYFOB:
+				log_msg(LOG_LEVEL_DEBUG,
+					"[KEYFOB_PRESS] PN:%d AREA:%d ZONE:%d KEY:%d",
+					data[2],
+					data[3],
+					data[4]<<8+data[5],
+					data[6]
+				);
+				break;
 		}
 	}
 
