@@ -520,9 +520,9 @@ partition_node_var_func(
 				ret = SMCP_STATUS_OK;
 			} else if(!system_state->interface.got_response) {
 				switch(atoi(value)) {
-					case 1: send_keypress(&system_state->interface,node->partition_number,0,"[20]");break;
-					case 2: send_keypress(&system_state->interface,node->partition_number,0,"[28]");break;
-					case 3: send_keypress(&system_state->interface,node->partition_number,0,"[27]");break;
+					case 1: send_keypress(&system_state->interface,node->partition_number,0,"5[20]");break;
+					case 2: send_keypress(&system_state->interface,node->partition_number,0,"5[28]");break;
+					case 3: send_keypress(&system_state->interface,node->partition_number,0,"5[27]");break;
 					default:
 						log_msg(LOG_LEVEL_WARNING,"Bad arming level \"%s\"",value);
 						return SMCP_STATUS_FAILURE;
@@ -876,7 +876,7 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 			memcpy(zone->label,data+8,len-8);
 		}
 
-		log_msg(LOG_LEVEL_NOTICE,"[ZONE_INFO] ZONE:%d PN:%d AREA:%d TYPE:%d GROUP:%d STATUS:%s%s%s%s%s TEXT:\"%s\"",
+		log_msg(LOG_LEVEL_NOTICE,"[EQUIP_LIST_ZONE_INFO] ZONE:%d PN:%d AREA:%d TYPE:%d GROUP:%d STATUS:%s%s%s%s%s TEXT:\"%s\"",
 			zonei,
 			data[1],
 			data[2],
@@ -892,6 +892,51 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 		);
 		return 0;
 		len = 0;
+	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_SUPERBUS_DEV_DATA) {
+		log_msg(LOG_LEVEL_INFO,
+			"[EQUIP_LIST_SUPERBUS_DEV_DATA] PN:%d AREA:%d UNIT-ID:0x%06x UN:%d STATUS:%s",
+			data[1],
+			data[2],
+			(data[3]<<16)+(data[4]<<8)+data[5],
+			data[7],
+			data[6]?"FAILURE":"OK"
+		);
+		len = 0;
+	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_SUPERBUS_CAP_DATA) {
+		const char* cap_list[] = {
+			[0x00]="Power Supervision",
+			[0x01]="Access Control",
+			[0x02]="Analog Smoke",
+			[0x03]="Audio Listen-In",
+			[0x04]="SnapCard Supervision",
+			[0x05]="Microburst",
+			[0x06]="Dual Phone Line",
+			[0x07]="Energy Management",
+			[0x08]="Input Zones",
+			[0x09]="Automation",
+			[0x0A]="Phone Interface",
+			[0x0B]="Relay Outputs",
+			[0x0C]="RF Receiver",
+			[0x0D]="RF Transmitter",
+			[0x0E]="Parallel Printer",
+			[0x0F]="UNKNOWN-0x0F",
+			[0x10]="LED Touchpad",
+			[0x11]="1-Line/2-Line/BLT Touchpad",
+			[0x12]="GUI Touchpad",
+			[0x13]="Voice Evacuation",
+			[0x14]="Pager",
+			[0x15]="Downloadable code/data",
+			[0x16]="JTECH Premise Pager",
+			[0x17]="Cryptography",
+			[0x18]="LED Display",
+		};
+
+		log_msg(LOG_LEVEL_INFO,
+			"[EQUIP_LIST_SUPERBUS_CAP_DATA] UNIT-ID:0x%06x CAP:\"%s\" DATA:%d",
+			(data[1]<<16)+(data[2]<<8)+data[3],
+			data[4]<(sizeof(cap_list)/sizeof(*cap_list))?cap_list[data[4]]:"unknown",
+			data[5]
+		);
 	} else if(data[0]==GE_RS232_PTA_CLEAR_AUTOMATION_DYNAMIC_IMAGE) {
 		log_msg(LOG_LEVEL_NOTICE,"[CLEAR_AUTOMATION_DYNAMIC_IMAGE]");
 		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
@@ -931,14 +976,15 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				break;
 			case GE_RS232_PTA_SUBCMD_ALARM_TROUBLE:
 				log_msg(LOG_LEVEL_ALERT,
-					data[5]?"[ALARM/TROUBLE] PN:%d AREA:%d ST:%d UNIT-ID:0x%06x ALARM:%d.%d"
-					:"[ALARM/TROUBLE] PN:%d AREA:%d ST:%d ZONE:%d ALARM:%d.%d",
+					data[5]?"[ALARM/TROUBLE] PN:%d AREA:%d ST:%d UNIT-ID:0x%06x ALARM:%d.%d ESD:%d"
+					:"[ALARM/TROUBLE] PN:%d AREA:%d ST:%d ZONE:%d ALARM:%d.%d ESD:%d",
 					data[2],
 					data[3],
 					data[4],
 					(data[5]<<16)+(data[6]<<8)+data[7],
 					data[8],
-					data[9]
+					data[9],
+					(data[10]<<8)+data[11]
 				);
 				switch(data[8]) {
 					case 1: // General Alarm
@@ -957,9 +1003,13 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				break;
 			case GE_RS232_PTA_SUBCMD_ENTRY_EXIT_DELAY:
 				log_msg(LOG_LEVEL_INFO,
-					"[EXIT_DELAY] PN:%d AREA:%d",
+					"[%s_%s_DELAY] PN:%d AREA:%d EXT:%d SECONDS:%d",
+					data[4]&(1<<7)?"END":"BEGIN",
+					data[4]&(1<<6)?"EXIT":"ENTRY",
 					data[2],
-					data[3]
+					data[3],
+					data[4]&0x3,
+					(data[5]<<8)+data[6]
 				);
 				return 0;
 				break;
@@ -1067,7 +1117,7 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 		switch(data[1]) {
 			case GE_RS232_PTA_SUBCMD2_LIGHTS_STATE:
 				log_msg(LOG_LEVEL_INFO,
-					"[LIGHTS_STATE] PN:%d AREA:%d STATE:%d%d%d%d%d%d%d%d%d",
+					"[LIGHTS_STATE] PN:%d AREA:%d STATE:%d_%d%d%d%d%d%d%d%d",
 					data[2],
 					data[3],
 					!!(data[4]&(1<<0)),
