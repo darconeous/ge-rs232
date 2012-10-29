@@ -1015,9 +1015,14 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_SETUP:
 				log_msg(LOG_LEVEL_INFO,
-					"[SIREN_SETUP] PN:%d AREA:%d",
+					"[SIREN_SETUP] PN:%d AREA:%d RP:%d CD:%02x%02x%02x%02x",
 					data[2],
-					data[3]
+					data[3],
+					data[4],
+					data[5],
+					data[6],
+					data[7],
+					data[8]
 				);
 				return 0;
 				break;
