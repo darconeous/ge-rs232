@@ -164,6 +164,7 @@ struct ge_partition_s {
 
 	uint8_t arming_level;
 	uint16_t armed_by;
+	time_t arm_date;
 
 	uint8_t feature_state;
 	uint16_t light_state;
@@ -364,6 +365,7 @@ partition_node_var_func(
 	enum {
 		PATH_ARM_LEVEL=0,
 		PATH_ARMED_BY,
+		PATH_ARM_DATE,
 		PATH_FS_CHIME,
 		PATH_FS_ENERGY_SAVER,
 		PATH_FS_NO_DELAY,
@@ -395,6 +397,7 @@ partition_node_var_func(
 		static const char* path_names[] = {
 			"arm-level",
 			"armed-by",
+			"arm-date",
 			"chime",
 			"energy-saver",
 			"no-delay",
@@ -494,6 +497,8 @@ partition_node_var_func(
 				v = node->arming_level;
 			else if(path>=PATH_LIGHT_ALL && path<=PATH_LIGHT_9)
 				v = !!(node->light_state & (1<<(path-PATH_LIGHT_ALL)));
+			else if(path==PATH_ARM_DATE)
+				v = node->arm_date;
 			else if(path==PATH_ARMED_BY)
 				v = node->armed_by;
 			else if(path==PATH_FS_CHIME)
@@ -631,6 +636,7 @@ zone_node_var_func(
 		PATH_GROUP,
 		PATH_TYPE,
 		PATH_TEXT,
+		PATH_LAST_TRIPPED,
 		PATH_STATUS_TRIPPED,
 		PATH_STATUS_FAULT,
 		PATH_STATUS_ALARM,
@@ -649,6 +655,7 @@ zone_node_var_func(
 			"gn",
 			"zt",
 			"text",
+			"last-tripped",
 			"zs.tripped",
 			"zs.fault",
 			"zs.alarm",
@@ -678,6 +685,8 @@ zone_node_var_func(
 				v = node->group;
 			else if(path==PATH_TYPE)
 				v = node->type;
+			else if(path==PATH_LAST_TRIPPED)
+				v = node->last_tripped;
 			else if(path==PATH_STATUS_TRIPPED)
 				v = !!(node->status & GE_RS232_ZONE_STATUS_TRIPPED);
 			else if(path==PATH_STATUS_TROUBLE)
@@ -777,6 +786,9 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 
 		if(zone) {
 			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TRIPPED) {
+				if((data[5]&GE_RS232_ZONE_STATUS_TRIPPED))
+					zone->last_tripped = time(NULL);
+
 				smcp_trigger_event_with_node(
 					smcp_node_get_root((smcp_node_t)node),
 					&zone->node.node,
@@ -962,6 +974,22 @@ received_message(struct ge_system_state_s *node, const uint8_t* data, uint8_t le
 				if(partition) {
 					partition->arming_level = data[6];
 					partition->armed_by = (data[4]<<8)+(data[5]);
+					partition->arm_date = time(NULL);
+					smcp_trigger_event_with_node(
+						smcp_node_get_root((smcp_node_t)node),
+						&partition->node.node,
+						"arm-level"
+					);
+					smcp_trigger_event_with_node(
+						smcp_node_get_root((smcp_node_t)node),
+						&partition->node.node,
+						"arm-date"
+					);
+					smcp_trigger_event_with_node(
+						smcp_node_get_root((smcp_node_t)node),
+						&partition->node.node,
+						"armed-by"
+					);
 				}
 				}
 				log_msg(LOG_LEVEL_NOTICE,
