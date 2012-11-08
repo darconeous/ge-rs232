@@ -677,19 +677,19 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TRIPPED) {
 				if((data[5]&GE_RS232_ZONE_STATUS_TRIPPED)) {
 					zone->last_tripped = time(NULL);
-					smcp_variable_node_did_change(&zone->node,PATH_LAST_TRIPPED);
+					smcp_variable_node_did_change(&zone->node,PATH_LAST_TRIPPED,NULL);
 				}
 
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_TRIPPED);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_TRIPPED,(data[5]&GE_RS232_ZONE_STATUS_TRIPPED)?"v=1":"v=0");
 			}
 			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_FAULT)
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_FAULT);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_FAULT,(data[5]&GE_RS232_ZONE_STATUS_FAULT)?"v=1":"v=0");
 			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_TROUBLE)
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_TROUBLE);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_TROUBLE,(data[5]&GE_RS232_ZONE_STATUS_TROUBLE)?"v=1":"v=0");
 			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_ALARM)
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_ALARM);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_ALARM,(data[5]&GE_RS232_ZONE_STATUS_ALARM)?"v=1":"v=0");
 			if((zone->status^data[5])&GE_RS232_ZONE_STATUS_BYPASSED)
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_BYPASS);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_BYPASS,(data[5]&GE_RS232_ZONE_STATUS_BYPASSED)?"v=1":"v=0");
 			zone->partition = data[1];
 			zone->area = data[2];
 			zone->status = data[5];
@@ -713,15 +713,15 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 		if(zone) {
 
 			//if((zone->status^data[7])&GE_RS232_ZONE_STATUS_TRIPPED)
-			//	smcp_variable_node_did_change(&zone->node,PATH_STATUS_TRIPPED);
+			//	smcp_variable_node_did_change(&zone->node,PATH_STATUS_TRIPPED,NULL);
 			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_FAULT)
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_FAULT);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_FAULT,(data[7]&GE_RS232_ZONE_STATUS_FAULT)?"v=1":"v=0");
 			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_TROUBLE)
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_TROUBLE);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_TROUBLE,(data[7]&GE_RS232_ZONE_STATUS_TROUBLE)?"v=1":"v=0");
 			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_ALARM)
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_ALARM);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_ALARM,(data[7]&GE_RS232_ZONE_STATUS_ALARM)?"v=1":"v=0");
 			if((zone->status^data[7])&GE_RS232_ZONE_STATUS_BYPASSED)
-				smcp_variable_node_did_change(&zone->node,PATH_STATUS_BYPASS);
+				smcp_variable_node_did_change(&zone->node,PATH_STATUS_BYPASS,(data[7]&GE_RS232_ZONE_STATUS_BYPASSED)?"v=1":"v=0");
 			zone->partition = data[1];
 			zone->area = data[2];
 			zone->group = data[3];
@@ -821,9 +821,9 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 					partition->arming_level = data[6];
 					partition->armed_by = (data[4]<<8)+(data[5]);
 					partition->arm_date = time(NULL);
-					smcp_variable_node_did_change(&partition->node,PATH_ARM_LEVEL);
-					smcp_variable_node_did_change(&partition->node,PATH_ARM_DATE);
-					smcp_variable_node_did_change(&partition->node,PATH_ARMED_BY);
+					smcp_variable_node_did_change(&partition->node,PATH_ARM_LEVEL,NULL);
+					smcp_variable_node_did_change(&partition->node,PATH_ARM_DATE,NULL);
+					smcp_variable_node_did_change(&partition->node,PATH_ARMED_BY,NULL);
 				}
 				}
 				log_msg(LOG_LEVEL_NOTICE,
@@ -911,7 +911,7 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 				int partitioni = data[2];
 				struct ge_partition_s* partition = ge_get_partition(node,partitioni);
 				if(partition) {
-					smcp_variable_node_did_change(&partition->node,PATH_TOUCHPAD_TEXT);
+					smcp_variable_node_did_change(&partition->node,PATH_TOUCHPAD_TEXT,NULL);
 
 					if(len-5!=partition->touchpad_lcd_len
 						|| 0!=memcmp(data+5,partition->touchpad_lcd,len-5)
@@ -945,17 +945,17 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 				struct ge_partition_s* partition = ge_get_partition(node,partitioni);
 				if(partition) {
 					if((partition->feature_state^data[4])&(1<<0))
-						smcp_variable_node_did_change(&partition->node,PATH_FS_CHIME);
+						smcp_variable_node_did_change(&partition->node,PATH_FS_CHIME,(data[4]&(1<<0))?"v=1":"v=0");
 					if((partition->feature_state^data[4])&(1<<1))
-						smcp_variable_node_did_change(&partition->node,PATH_FS_ENERGY_SAVER);
+						smcp_variable_node_did_change(&partition->node,PATH_FS_ENERGY_SAVER,(data[4]&(1<<1))?"v=1":"v=0");
 					if((partition->feature_state^data[4])&(1<<2))
-						smcp_variable_node_did_change(&partition->node,PATH_FS_NO_DELAY);
+						smcp_variable_node_did_change(&partition->node,PATH_FS_NO_DELAY,(data[4]&(1<<2))?"v=1":"v=0");
 					if((partition->feature_state^data[4])&(1<<3))
-						smcp_variable_node_did_change(&partition->node,PATH_FS_LATCHKEY);
+						smcp_variable_node_did_change(&partition->node,PATH_FS_LATCHKEY,(data[4]&(1<<3))?"v=1":"v=0");
 					if((partition->feature_state^data[4])&(1<<4))
-						smcp_variable_node_did_change(&partition->node,PATH_FS_SILENT_ARMING);
+						smcp_variable_node_did_change(&partition->node,PATH_FS_SILENT_ARMING,(data[4]&(1<<4))?"v=1":"v=0");
 					if((partition->feature_state^data[4])&(1<<5))
-						smcp_variable_node_did_change(&partition->node,PATH_FS_QUICK_ARM);
+						smcp_variable_node_did_change(&partition->node,PATH_FS_QUICK_ARM,(data[4]&(1<<5))?"v=1":"v=0");
 					partition->feature_state = data[4];
 				}
 				log_msg(LOG_LEVEL_DEBUG,
@@ -1010,25 +1010,25 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 				struct ge_partition_s* partition = ge_get_partition(node,partitioni);
 				if(partition) {
 					if((partition->light_state^data[4])&(1<<0))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_ALL);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_ALL,(data[4]&(1<<0))?"v=1":"v=0");
 					if((partition->light_state^data[4])&(1<<1))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_1);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_1,(data[4]&(1<<1))?"v=1":"v=0");
 					if((partition->light_state^data[4])&(1<<2))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_2);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_2,(data[4]&(1<<2))?"v=1":"v=0");
 					if((partition->light_state^data[4])&(1<<3))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_3);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_3,(data[4]&(1<<3))?"v=1":"v=0");
 					if((partition->light_state^data[4])&(1<<4))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_4);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_4,(data[4]&(1<<4))?"v=1":"v=0");
 					if((partition->light_state^data[4])&(1<<5))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_5);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_5,(data[4]&(1<<5))?"v=1":"v=0");
 					if((partition->light_state^data[4])&(1<<6))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_6);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_6,(data[4]&(1<<6))?"v=1":"v=0");
 					if((partition->light_state^data[4])&(1<<7))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_7);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_7,(data[4]&(1<<7))?"v=1":"v=0");
 					if(((partition->light_state>>8)^data[5])&(1<<0))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_8);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_8,(data[4]&(1<<8))?"v=1":"v=0");
 					if(((partition->light_state>>8)^data[5])&(1<<1))
-						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_9);
+						smcp_variable_node_did_change(&partition->node,PATH_LIGHT_9,(data[4]&(1<<9))?"v=1":"v=0");
 					partition->light_state = data[4]+(data[5]<<8);
 				}
 				len=0;
