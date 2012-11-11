@@ -1109,33 +1109,15 @@ ge_system_node_alloc() {
 	return ret;
 }
 
-ge_system_node_t
-smcp_ge_system_node_init(
-	ge_system_node_t self,
-	smcp_node_t parent,
-	const char* name
-) {
-	require(self || (self = ge_system_node_alloc()), bail);
-
-	require(smcp_node_init(
-		&self->node,
-		(void*)parent,
-		name
-	), bail);
-
-	ge_rs232_t interface = ge_rs232_init(&self->interface);
-	interface->received_message = (void*)&received_message;
-	interface->send_byte = &send_byte;
-	interface->context = (void*)self;
-
-
-	const char* device = "/dev/ttyUSB0";
+static smcp_status_t
+reset_serial(ge_system_node_t self, const char* device) {
+	ge_rs232_t interface = &self->interface;
 	int fd = -1;
 	log_msg(LOG_LEVEL_NOTICE,"Opening \"%s\" . . .",device);
 	fd = open(device,O_RDWR | O_NOCTTY | O_NDELAY);
 	if(fd<0) {
 		log_msg(LOG_LEVEL_CRITICAL,"Unable to open \"%s\"!",device);
-		goto bail;
+		return -1;
 	}
 	self->serial_in = fdopen(fd,"r");
 	self->serial_out = fdopen(fd,"w");
@@ -1161,6 +1143,37 @@ smcp_ge_system_node_init(
 		t.c_oflag = 0;
 		t.c_lflag = 0;
 		tcsetattr(fileno(self->serial_out), TCSANOW, &t);
+	}
+	return 0;
+}
+
+ge_system_node_t
+smcp_ge_system_node_init(
+	ge_system_node_t self,
+	smcp_node_t parent,
+	const char* name
+) {
+	require(self || (self = ge_system_node_alloc()), bail);
+
+	require(smcp_node_init(
+		&self->node,
+		(void*)parent,
+		name
+	), bail);
+
+	ge_rs232_t interface = ge_rs232_init(&self->interface);
+	interface->received_message = (void*)&received_message;
+	interface->send_byte = &send_byte;
+	interface->context = (void*)self;
+
+
+	if(SMCP_STATUS_OK!=reset_serial(self,"/dev/ttyUSB0")) {
+		if(SMCP_STATUS_OK!=reset_serial(self,"/dev/ttyUSB1")) {
+			smcp_node_delete(&self->node);
+			self = NULL;
+			sleep(1);
+			goto bail;
+		}
 	}
 
 	// Make sure we at least have the first partition set up.
@@ -1191,14 +1204,29 @@ smcp_ge_system_node_update_fdset(
 	if(read_fd_set && fd >= 0)
 		FD_SET(fd,read_fd_set);
 
+	if(exc_fd_set && fd >= 0)
+		FD_SET(fd,exc_fd_set);
+
 	return 0;
 }
 
 smcp_status_t
 smcp_ge_system_node_process(ge_system_node_t self) {
+	smcp_status_t status = 0;
+
 	struct pollfd polltable[] = {
 		{ fileno(self->serial_in), POLLIN | POLLHUP, 0 },
 	};
+
+	if(feof(self->serial_in) || ferror(self->serial_in)) {
+		status = reset_serial(self,"/dev/ttyUSB0");
+		if(SMCP_STATUS_OK!=status) {
+			status = reset_serial(self,"/dev/ttyUSB1");
+		}
+		if(SMCP_STATUS_OK!=status) {
+			goto bail;
+		}
+	}
 
 	if(poll(polltable, 1, 10) > 0) {
 		ge_rs232_status_t status;
@@ -1223,8 +1251,8 @@ smcp_ge_system_node_process(ge_system_node_t self) {
 			self->interface.got_response(self->interface.context,&self->interface,false);
 		}
 	}
-
-	return 0;
+bail:
+	return status;
 }
 
 
