@@ -242,9 +242,9 @@ void got_panel_response(struct ge_system_state_s* self,struct ge_rs232_s* instan
 	instance->got_response = NULL;
 	smcp_t smcp_instance = (smcp_t)smcp_node_get_root(&self->node);
 
-	smcp_begin_transaction(
+	smcp_begin_transaction_old(
 		smcp_instance,
-		smcp_get_next_tid(smcp_instance,NULL),
+		smcp_get_next_msg_id(smcp_instance,NULL),
 		5*1000,    // Retry for five seconds.
 		0, // Flags
 		(void*)&resend_async_response,
