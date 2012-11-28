@@ -78,10 +78,11 @@ void log_msg(int level,const char* format, ...) {
 #endif
 }
 
-static void
+static smcp_status_t
 async_response_ack_handler(int statuscode, struct ge_system_node_s* self) {
     struct smcp_async_response_s* async_response = &self->async_response;
 	smcp_finish_async_response(async_response);
+	return SMCP_STATUS_OK;
 }
 
 static smcp_status_t
