@@ -71,11 +71,17 @@ struct ge_partition_s {
 	uint16_t armed_by;
 	time_t arm_date;
 
+	bool exit_delay_active;
+	bool entry_delay_active;
+	time_t exit_delay_finish_time;
+
 	uint8_t feature_state;
 	uint16_t light_state;
 
 	char label[16];
 	uint8_t label_len;
+
+	char master_code[5];
 
 	char touchpad_lcd[32];
 	uint8_t touchpad_lcd_len;
@@ -99,6 +105,9 @@ struct ge_system_node_s {
 	uint16_t hardware_rev;
 	uint16_t software_rev;
 	uint32_t serial;
+
+	char installer_code[5];
+	char system_code[5];
 
 	struct smcp_async_response_s async_response;
 };

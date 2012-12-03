@@ -269,6 +269,40 @@ ge_rs232_status_t send_keypress(ge_rs232_t interface,uint8_t partition, uint8_t 
 		PATH_COUNT,
 	};
 
+const char* ge_user_to_cstr(char* dest, int user) {
+	static char static_string[128];
+	if(!dest)
+		dest = static_string;
+
+	if(user>=230 && user<=237) {
+		snprintf(dest,sizeof(static_string),"P%d-MASTER-CODE");
+	} else if(user>=238 && user<=245) {
+		snprintf(dest,sizeof(static_string),"P%d-DURESS-CODE");
+	} else if(user==246) {
+		strncpy(dest,"SYSTEM-CODE",sizeof(static_string));
+	} else if(user==247) {
+		strncpy(dest,"INSTALLER",sizeof(static_string));
+	} else if(user==248) {
+		strncpy(dest,"DEALER",sizeof(static_string));
+	} else if(user==249) {
+		strncpy(dest,"AVM-CODE",sizeof(static_string));
+	} else if(user==250) {
+		strncpy(dest,"QUICK-ARM",sizeof(static_string));
+	} else if(user==251) {
+		strncpy(dest,"KEY-SWITCH",sizeof(static_string));
+	} else if(user==252) {
+		strncpy(dest,"SYSTEM",sizeof(static_string));
+	} else if(user==255) {
+		strncpy(dest,"AUTOMATION",sizeof(static_string));
+	} else if(user==65535) {
+		strncpy(dest,"SYSTEM/KEY-SWITCH",sizeof(static_string));
+	} else {
+		snprintf(dest,sizeof(static_string),"USER-%d",user);
+	}
+	return dest;
+}
+
+
 static smcp_status_t
 partition_node_var_func(
 	struct ge_partition_s *node,
@@ -326,33 +360,73 @@ partition_node_var_func(
 				ret = SMCP_STATUS_NOT_ALLOWED;
 			}
 		} else if(path==PATH_ARMED_BY) {
-			if(node->armed_by>=230 && node->armed_by<=237) {
-				strncpy(value,"PARTITION-MASTER-CODE",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by>=238 && node->armed_by<=245) {
-				strncpy(value,"DURESS-CODE",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==246) {
-				strncpy(value,"SYSTEM-CODE",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==247) {
-				strncpy(value,"INSTALLER",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==248) {
-				strncpy(value,"DEALER",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==249) {
-				strncpy(value,"AVM-CODE",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==250) {
-				strncpy(value,"QUICK-ARM",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==251) {
-				strncpy(value,"KEY-SWITCH",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==252) {
-				strncpy(value,"SYSTEM",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==255) {
-				strncpy(value,"AUTOMATION",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else if(node->armed_by==65535) {
-				strncpy(value,"SYSTEM/KEY-SWITCH",SMCP_VARIABLE_MAX_VALUE_LENGTH);
-			} else {
-				snprintf(value,SMCP_VARIABLE_MAX_VALUE_LENGTH,"USER-%d",node->armed_by);
-			}
+			ge_user_to_cstr(value,node->armed_by);
 		} else {
 			ret = SMCP_STATUS_NOT_ALLOWED;
+		}
+	} else if(action==SMCP_VAR_GET_MAX_AGE) {
+		int v = 0;
+		switch(path) {
+			case PATH_TOUCHPAD_TEXT:
+				v = (node->arming_level<=1)?60:240;
+				break;
+			case PATH_ARM_LEVEL:
+			case PATH_ARMED_BY:
+			case PATH_ARM_DATE:
+			case PATH_FS_CHIME:
+			case PATH_FS_ENERGY_SAVER:
+			case PATH_FS_NO_DELAY:
+			case PATH_FS_LATCHKEY:
+			case PATH_FS_SILENT_ARMING:
+			case PATH_FS_QUICK_ARM:
+			case PATH_LIGHT_ALL:
+			case PATH_LIGHT_1:
+			case PATH_LIGHT_2:
+			case PATH_LIGHT_3:
+			case PATH_LIGHT_4:
+			case PATH_LIGHT_5:
+			case PATH_LIGHT_6:
+			case PATH_LIGHT_7:
+			case PATH_LIGHT_8:
+			case PATH_LIGHT_9:
+				v = 3600;
+				break;
+			default:
+				ret = SMCP_STATUS_NOT_ALLOWED;
+				break;
+		}
+		if(v) {
+			sprintf(value,"%d",v);
+		} else {
+			ret = SMCP_STATUS_NOT_ALLOWED;
+		}
+	} else if(action==SMCP_VAR_GET_OBSERVABLE) {
+		switch(path) {
+			case PATH_TOUCHPAD_TEXT:
+			case PATH_ARM_LEVEL:
+			case PATH_ARMED_BY:
+			case PATH_ARM_DATE:
+			case PATH_FS_CHIME:
+			case PATH_FS_ENERGY_SAVER:
+			case PATH_FS_NO_DELAY:
+			case PATH_FS_LATCHKEY:
+			case PATH_FS_SILENT_ARMING:
+			case PATH_FS_QUICK_ARM:
+			case PATH_LIGHT_ALL:
+			case PATH_LIGHT_1:
+			case PATH_LIGHT_2:
+			case PATH_LIGHT_3:
+			case PATH_LIGHT_4:
+			case PATH_LIGHT_5:
+			case PATH_LIGHT_6:
+			case PATH_LIGHT_7:
+			case PATH_LIGHT_8:
+			case PATH_LIGHT_9:
+				ret = SMCP_STATUS_OK;
+				break;
+			default:
+				ret = SMCP_STATUS_NOT_ALLOWED;
+				break;
 		}
 	} else if(action==SMCP_VAR_GET_VALUE) {
 		if(path==PATH_TOUCHPAD_TEXT) {
@@ -553,6 +627,47 @@ zone_node_var_func(
 			"zs.bypass",
 		};
 		strcpy(value,path_names[path]);
+	} else if(action==SMCP_VAR_GET_MAX_AGE) {
+		int v = 0;
+		switch(path) {
+			case PATH_PARTITION:
+			case PATH_AREA:
+			case PATH_GROUP:
+			case PATH_TYPE:
+			case PATH_TEXT:
+				v = 3600;
+				break;
+			case PATH_LAST_TRIPPED:
+			case PATH_STATUS_TRIPPED:
+			case PATH_STATUS_FAULT:
+			case PATH_STATUS_ALARM:
+			case PATH_STATUS_TROUBLE:
+			case PATH_STATUS_BYPASS:
+				v = 60*5;
+				break;
+			default:
+				ret = SMCP_STATUS_NOT_ALLOWED;
+				break;
+		}
+		if(v) {
+			sprintf(value,"%d",v);
+		} else {
+			ret = SMCP_STATUS_NOT_ALLOWED;
+		}
+	} else if(action==SMCP_VAR_GET_OBSERVABLE) {
+		switch(path) {
+			case PATH_LAST_TRIPPED:
+			case PATH_STATUS_TRIPPED:
+			case PATH_STATUS_FAULT:
+			case PATH_STATUS_ALARM:
+			case PATH_STATUS_TROUBLE:
+			case PATH_STATUS_BYPASS:
+				ret = SMCP_STATUS_OK;
+				break;
+			default:
+				ret = SMCP_STATUS_NOT_ALLOWED;
+				break;
+		}
 	} else if(action==SMCP_VAR_GET_VALUE) {
 		if(path==PATH_TEXT) {
 			// Just send the ascii for now.
@@ -632,7 +747,54 @@ ge_get_partition(struct ge_system_node_s *node,int partitioni) {
 	return partition;
 }
 
+bool
+should_bypass_gate(void) {
+	struct tm* local;
+	time_t t;
 
+	time(&t);
+
+	local = localtime(&t);
+
+//	return 1;
+	return local->tm_wday==3
+		&& local->tm_hour>=7
+		&& local->tm_hour<=12+5;
+}
+
+static time_t next_lawn_care_hack_check;
+
+void
+lawn_care_hack_check(struct ge_system_node_s *self) {
+	struct ge_partition_s* partition = ge_get_partition(self,1);
+	struct ge_zone_s* zone = ge_get_zone(self,18);
+
+	ge_rs232_status_t status = ge_rs232_ready_to_send(&self->interface);
+	if(status == GE_RS232_STATUS_WAIT) {
+		next_lawn_care_hack_check = time(NULL)+2;
+		return;
+	}
+	static bool did_run;
+
+	if(!did_run && partition->arming_level==2 || partition->arming_level==3) {
+		bool gate_is_bypassed = !!(zone->status&GE_RS232_ZONE_STATUS_BYPASSED);
+		if(gate_is_bypassed^should_bypass_gate()) {
+			const char* code = self->system_code;
+			char bypass_command[40];
+			if(code[0]) {
+//				did_run = 1;
+				snprintf(bypass_command,sizeof(bypass_command),"#%s18",code);
+				//log_msg(LOG_LEVEL_ERROR,"LAWN HACK KEYPRESS: %s",bypass_command);
+				//zone->status|=GE_RS232_ZONE_STATUS_BYPASSED;
+				send_keypress(&self->interface,partition->partition_number,0,bypass_command);
+			}
+		}
+	} else if(partition->arming_level==1) {
+		did_run = 0;
+	}
+
+	next_lawn_care_hack_check = time(NULL)+60;
+}
 
 ge_rs232_status_t
 received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len,struct ge_rs232_s* interface) {
@@ -751,6 +913,41 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 		);
 		return 0;
 		len = 0;
+	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_USER_DATA) {
+		uint16_t user = (data[1]<<8)+data[2];
+		char code_backing[5];
+		char* code = code_backing;
+
+		if(user == 246) {
+			code = node->system_code;
+		} else if(user == 247) {
+			code = node->installer_code;
+		} else if(user>=230 && user<=237) {
+			// Partition master code
+		} else if(user>=238 && user<=245) {
+			// Partition duress code
+		}
+
+		if(code) {
+			code[0] = (data[4]>>4)+'0';
+			code[1] = (data[4]&0xF)+'0';
+			code[2] = (data[5]>>4)+'0';
+			code[3] = (data[5]&0xF)+'0';
+			code[4] = 0;
+
+			// Check for the zero code, which is invalid.
+			if(strcmp(code,"0000")==0)
+				code[0] = 0;
+
+#if DEBUG
+			log_msg(LOG_LEVEL_DEBUG,
+				"[EQUIP_LIST_USER_DATA] USER:\"%s\"(%d) CODE=\"%s\"",
+				ge_user_to_cstr(NULL,user),
+				user,
+				code
+			);
+#endif
+		}
 	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_SUPERBUS_DEV_DATA) {
 		log_msg(LOG_LEVEL_INFO,
 			"[EQUIP_LIST_SUPERBUS_DEV_DATA] PN:%d AREA:%d UNIT-ID:0x%06x UN:%d STATUS:%s",
@@ -825,6 +1022,11 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 					smcp_variable_node_did_change(&partition->node,PATH_ARM_LEVEL,NULL);
 					smcp_variable_node_did_change(&partition->node,PATH_ARM_DATE,NULL);
 					smcp_variable_node_did_change(&partition->node,PATH_ARMED_BY,NULL);
+					if(partition->arming_level == 1) {
+						lawn_care_hack_check(node);
+					} else {
+						next_lawn_care_hack_check = time(NULL)+60;
+					}
 				}
 				}
 				log_msg(LOG_LEVEL_NOTICE,
@@ -874,6 +1076,17 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 					data[4]&0x3,
 					(data[5]<<8)+data[6]
 				);
+				int partitioni = data[2];
+				struct ge_partition_s* partition = ge_get_partition(node,partitioni);
+				if(partition) {
+					bool new_value = !!(data[4]&(1<<7));
+					if(data[4]&(1<<6)) {
+						partition->exit_delay_active = new_value;
+					} else {
+						partition->entry_delay_active = new_value;
+					}
+				}
+				lawn_care_hack_check(node);
 				return 0;
 				break;
 			case GE_RS232_PTA_SUBCMD_SIREN_SETUP:
@@ -1207,6 +1420,9 @@ smcp_ge_system_node_update_fdset(
 	if(exc_fd_set && fd >= 0)
 		FD_SET(fd,exc_fd_set);
 
+	if(timeout && *timeout/1000>(next_lawn_care_hack_check-time(NULL)))
+		*timeout = MAX(60,next_lawn_care_hack_check-time(NULL))*1000;
+
 	return 0;
 }
 
@@ -1251,6 +1467,10 @@ smcp_ge_system_node_process(ge_system_node_t self) {
 			self->interface.got_response(self->interface.context,&self->interface,false);
 		}
 	}
+
+	if(time(NULL)>next_lawn_care_hack_check)
+		lawn_care_hack_check(self);
+
 bail:
 	return status;
 }
