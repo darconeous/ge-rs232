@@ -126,16 +126,20 @@ void got_panel_response(struct ge_system_node_s* self,struct ge_rs232_s* instanc
 	instance->got_response = NULL;
 	smcp_t smcp_instance = (smcp_t)smcp_node_get_root(&self->node);
 
-	smcp_begin_transaction_old(
-		smcp_instance,
-		smcp_get_next_msg_id(smcp_instance,NULL),
-		5*1000,    // Retry for five seconds.
-		0, // Flags
+	smcp_transaction_t transaction = NULL;
+	transaction = smcp_transaction_init(
+		transaction,
+		0,
 		(void*)&resend_async_response,
 		(void*)&async_response_ack_handler,
 		(void*)self
 	);
 
+	smcp_transaction_begin(
+		smcp_instance,
+		transaction,
+		5*1000    // Retry for five seconds.
+	);
 }
 
 const char* ge_text_to_ascii_one_line(const char* bytes, uint8_t len) {
