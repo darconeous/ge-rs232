@@ -78,33 +78,41 @@ void log_msg(int level,const char* format, ...) {
 #endif
 }
 
+typedef struct {
+	smcp_t smcp;
+	struct smcp_async_response_s async_response;
+	ge_rs232_status_t status;
+	smcp_transaction_t transaction;
+} panel_response_context;
+
 static smcp_status_t
-async_response_ack_handler(int statuscode, struct ge_system_node_s* self) {
-    struct smcp_async_response_s* async_response = &self->async_response;
+async_response_ack_handler(int statuscode, panel_response_context* context) {
+    struct smcp_async_response_s* async_response = &context->async_response;
 	smcp_finish_async_response(async_response);
+	free(context);
 	return SMCP_STATUS_OK;
 }
 
 static smcp_status_t
-resend_async_response(struct ge_system_node_s* self) {
+resend_async_response(panel_response_context *context) {
     smcp_status_t ret = 0;
-    struct smcp_async_response_s* async_response = &self->async_response;
+    struct smcp_async_response_s* async_response = &context->async_response;
 
-	if(self->interface.last_response == GE_RS232_ACK)
+	if(context->status == GE_RS232_STATUS_OK) {
         ret = smcp_outbound_begin_response(COAP_RESULT_204_CHANGED);
-	else
+	} else {
         ret = smcp_outbound_begin_response(COAP_RESULT_500_INTERNAL_SERVER_ERROR);
+	}
+
 	require_noerr(ret,bail);
 
     ret = smcp_outbound_set_async_response(async_response);
     require_noerr(ret,bail);
 
-	if(self->interface.last_response == GE_RS232_NAK)
+	if(context->status == GE_RS232_STATUS_NAK)
 		smcp_outbound_set_content_formatted("NAK");
-	else if(self->interface.last_response == 0)
+	else if(context->status == GE_RS232_STATUS_TIMEOUT)
 		smcp_outbound_set_content_formatted("ACK-TIMEOUT");
-	else if(self->interface.last_response != GE_RS232_ACK)
-		smcp_outbound_set_content_formatted("WEIRD-LAST_RESPONSE '%u'",(int)self->interface.last_response);
 
     ret = smcp_outbound_send();
     require_noerr(ret,bail);
@@ -122,35 +130,49 @@ bail:
     return ret;
 }
 
-void got_panel_response(struct ge_system_node_s* self,struct ge_rs232_s* instance, bool didAck) {
-	instance->got_response = NULL;
-	smcp_t smcp_instance = (smcp_t)smcp_node_get_root(&self->node);
-
-	smcp_transaction_t transaction = NULL;
-	transaction = smcp_transaction_init(
-		transaction,
+void got_panel_response(void* c, ge_rs232_status_t status) {
+	panel_response_context* context = c;
+	if(!context)
+		return;
+	context->status = status;
+	context->transaction = NULL;
+	context->transaction = smcp_transaction_init(
+		context->transaction,
 		0,
 		(void*)&resend_async_response,
 		(void*)&async_response_ack_handler,
-		(void*)self
+		c
 	);
 
 	smcp_transaction_begin(
-		smcp_instance,
-		transaction,
+		context->smcp,
+		context->transaction,
 		5*1000    // Retry for five seconds.
 	);
+}
+
+static panel_response_context* new_panel_response_context() {
+	panel_response_context* ret = calloc(sizeof(panel_response_context),1);
+	smcp_start_async_response(&ret->async_response,0);
+	ret->smcp = smcp_get_current_instance();
+
+	return ret;
 }
 
 const char* ge_text_to_ascii_one_line(const char* bytes, uint8_t len) {
 	static char ret[1024];
 	ret[0] = 0;
+	// TODO: Optimize!
 	while(len--) {
 		const char* str = ge_rs232_text_token_lookup[*bytes++];
 		if(str) {
 			if(str[0]=='\n') {
 				if(len)
-					strlcat(ret," | ",sizeof(ret));
+					strlcat(ret,isspace(ret[strlen(ret)-1])?"| ":" | ",sizeof(ret));
+			} else if(str[0]=='\b') {
+				// Backspace
+				if(ret[0])
+					ret[strlen(ret)-1] = 0;
 			} else {
 				strlcat(ret,str,sizeof(ret));
 			}
@@ -158,39 +180,58 @@ const char* ge_text_to_ascii_one_line(const char* bytes, uint8_t len) {
 			strlcat(ret,"?",sizeof(ret));
 		}
 	}
+	// Remove trailing whitespace.
+	for(len=strlen(ret);len && isspace(ret[len-1]);len--)
+		ret[len-1] = 0;
 	return ret;
 }
 
 const char* ge_text_to_ascii(const char* bytes, uint8_t len) {
 	static char ret[1024];
 	ret[0] = 0;
+	// TODO: Optimize!
 	while(len--) {
 		const char* str = ge_rs232_text_token_lookup[*bytes++];
 		if(str) {
-			strlcat(ret,str,sizeof(ret));
+			if(str[0]=='\b') {
+				// Backspace
+				if(ret[0])
+					ret[strlen(ret)-1] = 0;
+			} else {
+				strlcat(ret,str,sizeof(ret));
+			}
 		} else {
 			strlcat(ret,"?",sizeof(ret));
 		}
 	}
+	// Remove trailing whitespace.
+	for(len=strlen(ret);len && isspace(ret[len-1]);len--)
+		ret[len-1] = 0;
 	return ret;
 }
 
-ge_rs232_status_t refresh_equipment_list(ge_rs232_t interface) {
-	uint8_t msg[] = {
-		GE_RS232_ATP_EQUIP_LIST_REQUEST,
-	};
-	return ge_rs232_send_message(interface,msg,sizeof(msg));
+static const uint8_t refresh_equipment_msg[] = { GE_RS232_ATP_EQUIP_LIST_REQUEST };
+static const uint8_t dynamic_data_refresh_msg[] = { GE_RS232_ATP_DYNAMIC_DATA_REFRESH };
+
+ge_rs232_status_t refresh_equipment_list(ge_queue_t	qinterface,
+	void (*finished)(void* context,ge_rs232_status_t status),
+	void* context
+) {
+	return ge_queue_message(qinterface,refresh_equipment_msg,sizeof(refresh_equipment_msg),finished,context);
 }
 
-ge_rs232_status_t dynamic_data_refresh(ge_rs232_t interface) {
-	uint8_t msg[] = {
-		GE_RS232_ATP_DYNAMIC_DATA_REFRESH,
-	};
-	return ge_rs232_send_message(interface,msg,sizeof(msg));
+ge_rs232_status_t dynamic_data_refresh(ge_queue_t qinterface,
+	void (*finished)(void* context,ge_rs232_status_t status),
+	void* context
+) {
+	return ge_queue_message(qinterface,dynamic_data_refresh_msg,sizeof(dynamic_data_refresh_msg),finished,context);
 }
 
 
-ge_rs232_status_t send_keypress(ge_rs232_t interface,uint8_t partition, uint8_t area, char* keys) {
+ge_rs232_status_t send_keypress(ge_queue_t qinterface,uint8_t partition, uint8_t area, char* keys,
+	void (*finished)(void* context,ge_rs232_status_t status),
+	void* context
+) {
 	uint8_t msg[50] = {
 		GE_RS232_ATP_KEYPRESS,
 		partition,	// Partition
@@ -239,7 +280,7 @@ ge_rs232_status_t send_keypress(ge_rs232_t interface,uint8_t partition, uint8_t 
 			continue;
 		msg[len++] = code;
 	}
-	return ge_rs232_send_message(interface,msg,len);
+	return ge_queue_message(qinterface,msg,len,finished,context);
 }
 
 	enum {
@@ -437,6 +478,9 @@ partition_node_var_func(
 			// Just send the ascii for now.
 			int i = 0;
 			value[0]=0;
+			strcpy(value,ge_text_to_ascii(node->touchpad_lcd,node->touchpad_lcd_len));
+
+/*
 			for(;i<node->touchpad_lcd_len;i++) {
 				const char* str = ge_rs232_text_token_lookup[node->touchpad_lcd[i]];
 
@@ -444,6 +488,7 @@ partition_node_var_func(
 					strlcat(value,str,SMCP_VARIABLE_MAX_VALUE_LENGTH);
 				}
 			}
+*/
 /*
 		} else if(path==PATH_TEXT) {
 			// Just send the ascii for now.
@@ -490,23 +535,33 @@ partition_node_var_func(
 			if((node->arming_level)==atoi(value)) {
 				// arm level already set!
 				ret = SMCP_STATUS_OK;
-			} else if(!system_state->interface.got_response) {
+			} else {
 				switch(atoi(value)) {
-					case 1: send_keypress(&system_state->interface,node->partition_number,0,"5[20]");break;
-					case 2: send_keypress(&system_state->interface,node->partition_number,0,"5[28]");break;
-					case 3: send_keypress(&system_state->interface,node->partition_number,0,"5[27]");break;
+					case 1:
+						send_keypress(&system_state->qinterface,node->partition_number,0,"5[20]",&got_panel_response,new_panel_response_context());
+						ret = SMCP_STATUS_ASYNC_RESPONSE;
+						break;
+					case 2:
+						send_keypress(&system_state->qinterface,node->partition_number,0,"5[28]",&got_panel_response,new_panel_response_context());
+						ret = SMCP_STATUS_ASYNC_RESPONSE;
+						break;
+					case 3:
+						send_keypress(&system_state->qinterface,node->partition_number,0,"5[27]",&got_panel_response,new_panel_response_context());
+						ret = SMCP_STATUS_ASYNC_RESPONSE;
+						break;
 					default:
 						log_msg(LOG_LEVEL_WARNING,"Bad arming level \"%s\"",value);
 						return SMCP_STATUS_FAILURE;
 				}
-				ret = smcp_start_async_response(&system_state->async_response,0);
-				require_noerr(ret,bail);
-				system_state->interface.got_response=(void*)&got_panel_response;
-				ret = SMCP_STATUS_ASYNC_RESPONSE;
-			} else {
-				smcp_outbound_drop();
-				log_msg(LOG_LEVEL_WARNING,"Too busy to set arming level. Dropping packet.");
-				ret = SMCP_STATUS_FAILURE;
+//				ret = smcp_start_async_response(&system_state->async_response,0);
+//				require_noerr(ret,bail);
+//				system_state->interface.response_context = system_state;
+//				system_state->interface.got_response=(void*)&got_panel_response;
+//				ret = SMCP_STATUS_ASYNC_RESPONSE;
+//			} else {
+//				smcp_outbound_drop();
+//				log_msg(LOG_LEVEL_WARNING,"Too busy to set arming level. Dropping packet.");
+//				ret = SMCP_STATUS_FAILURE;
 			}
 		} else if(path>=PATH_LIGHT_ALL && path<=PATH_LIGHT_9) {
 			struct ge_system_node_s* system_state=(struct ge_system_node_s*)node->node.node.parent;
@@ -514,12 +569,11 @@ partition_node_var_func(
 			if(!!(node->light_state & (1<<(path-PATH_LIGHT_ALL)))==atoi(value)) {
 				// Light already set!
 				ret = SMCP_STATUS_OK;
-			} else if(!system_state->interface.got_response
-				&& (0== send_keypress(&system_state->interface,node->partition_number,0,cmd))
-			) {
-				ret = smcp_start_async_response(&system_state->async_response,0);
-				require_noerr(ret,bail);
-				system_state->interface.got_response=(void*)&got_panel_response;
+			} else if(0== send_keypress(&system_state->qinterface,node->partition_number,0,cmd,&got_panel_response,new_panel_response_context())) {
+//				ret = smcp_start_async_response(&system_state->async_response,0);
+//				require_noerr(ret,bail);
+//				system_state->interface.response_context = system_state;
+//				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
 			} else {
 				log_msg(LOG_LEVEL_WARNING,"Too busy to change light. Dropping packet.");
@@ -531,12 +585,11 @@ partition_node_var_func(
 			if((node->feature_state & (1<<0))==atoi(value)) {
 				// Chime already set!
 				ret = SMCP_STATUS_OK;
-			} else if(!system_state->interface.got_response
-				&& (0== send_keypress(&system_state->interface,node->partition_number,0,"71"))
-			) {
-				ret = smcp_start_async_response(&system_state->async_response,0);
-				require_noerr(ret,bail);
-				system_state->interface.got_response=(void*)&got_panel_response;
+			} else if(0== send_keypress(&system_state->qinterface,node->partition_number,0,"71",&got_panel_response,new_panel_response_context())) {
+//				ret = smcp_start_async_response(&system_state->async_response,0);
+//				require_noerr(ret,bail);
+//				system_state->interface.response_context = system_state;
+//				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
 			} else {
 				log_msg(LOG_LEVEL_WARNING,"Too busy to set chime. Dropping packet.");
@@ -545,21 +598,24 @@ partition_node_var_func(
 			}
 		} else if(path==PATH_REFRESH_EQUIPMENT) {
 			struct ge_system_node_s* system_state=(struct ge_system_node_s*)node->node.node.parent;
-			if(!system_state->interface.got_response) {
-				refresh_equipment_list(&system_state->interface);
-				ret = smcp_start_async_response(&system_state->async_response,0);
-				require_noerr(ret,bail);
-				system_state->interface.got_response=(void*)&got_panel_response;
+			if(GE_RS232_STATUS_OK!=ge_queue_message(&system_state->qinterface,refresh_equipment_msg,sizeof(refresh_equipment_msg),&got_panel_response,new_panel_response_context()))
+				ret = SMCP_STATUS_FAILURE;
+			else
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
-			}
+//			if(!system_state->interface.got_response) {
+//				ret = smcp_start_async_response(&system_state->async_response,0);
+//				require_noerr(ret,bail);
+//				system_state->interface.response_context = system_state;
+//				system_state->interface.got_response=(void*)&got_panel_response;
+				ret = SMCP_STATUS_ASYNC_RESPONSE;
+//			}
 		} else if(path==PATH_KEYPRESS) {
 			struct ge_system_node_s* system_state=(struct ge_system_node_s*)node->node.node.parent;
-			if(!system_state->interface.got_response
-				&& (0 == send_keypress(&system_state->interface,node->partition_number,0,value))
-			) {
-				ret = smcp_start_async_response(&system_state->async_response,0);
-				require_noerr(ret,bail);
-				system_state->interface.got_response=(void*)&got_panel_response;
+			if(0 == send_keypress(&system_state->qinterface,node->partition_number,0,value,&got_panel_response,new_panel_response_context())) {
+//				ret = smcp_start_async_response(&system_state->async_response,0);
+//				require_noerr(ret,bail);
+//				system_state->interface.response_context = system_state;
+//				system_state->interface.got_response=(void*)&got_panel_response;
 				ret = SMCP_STATUS_ASYNC_RESPONSE;
 			} else {
 				log_msg(LOG_LEVEL_WARNING,"Too busy to send keypresses. Dropping packet.");
@@ -568,17 +624,23 @@ partition_node_var_func(
 			}
 		} else if(path==PATH_DDR) {
 			struct ge_system_node_s* system_state=(struct ge_system_node_s*)node->node.node.parent;
-			if(!system_state->interface.got_response) {
-				dynamic_data_refresh(&system_state->interface);
-				ret = smcp_start_async_response(&system_state->async_response,0);
-				require_noerr(ret,bail);
-				system_state->interface.got_response=(void*)&got_panel_response;
-				ret = SMCP_STATUS_ASYNC_RESPONSE;
-			} else {
-				log_msg(LOG_LEVEL_WARNING,"Too busy to send dynamic data refresh. Dropping packet.");
-				smcp_outbound_drop();
+			if(GE_RS232_STATUS_OK!=ge_queue_message(&system_state->qinterface,dynamic_data_refresh_msg,sizeof(dynamic_data_refresh_msg),&got_panel_response,new_panel_response_context()))
 				ret = SMCP_STATUS_FAILURE;
-			}
+			else
+				ret = SMCP_STATUS_ASYNC_RESPONSE;
+
+//			if(!system_state->interface.got_response) {
+//				dynamic_data_refresh(&system_state->interface);
+//				ret = smcp_start_async_response(&system_state->async_response,0);
+//				require_noerr(ret,bail);
+//				system_state->interface.response_context = system_state;
+//				system_state->interface.got_response=(void*)&got_panel_response;
+//				ret = SMCP_STATUS_ASYNC_RESPONSE;
+//			} else {
+//				log_msg(LOG_LEVEL_WARNING,"Too busy to send dynamic data refresh. Dropping packet.");
+//				smcp_outbound_drop();
+//				ret = SMCP_STATUS_FAILURE;
+//			}
 		} else {
 			ret = SMCP_STATUS_NOT_ALLOWED;
 		}
@@ -790,7 +852,7 @@ lawn_care_hack_check(struct ge_system_node_s *self) {
 				snprintf(bypass_command,sizeof(bypass_command),"#%s18",code);
 				//log_msg(LOG_LEVEL_ERROR,"LAWN HACK KEYPRESS: %s",bypass_command);
 				//zone->status|=GE_RS232_ZONE_STATUS_BYPASSED;
-				send_keypress(&self->interface,partition->partition_number,0,bypass_command);
+				send_keypress(&self->qinterface,partition->partition_number,0,bypass_command,NULL,NULL);
 			}
 		}
 	} else if(partition->arming_level==1) {
@@ -827,12 +889,7 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 
 	if(data[0]==GE_RS232_PTA_AUTOMATION_EVENT_LOST) {
 		log_msg(LOG_LEVEL_NOTICE,"[AUTOMATION_EVENT_LOST]");
-		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
-		if(status != GE_RS232_STATUS_WAIT) {
-			ge_rs232_status_t status = dynamic_data_refresh(interface);
-		} else {
-			log_msg(LOG_LEVEL_ERROR,"UNABLE TO SEND REFRESH: NOT READY");
-		}
+		ge_rs232_status_t status = dynamic_data_refresh(&node->qinterface,NULL,NULL);
 		len=0;
 		return 0;
 	} else if(data[0]==GE_RS232_PTA_ZONE_STATUS) {
@@ -999,12 +1056,7 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 		);
 	} else if(data[0]==GE_RS232_PTA_CLEAR_AUTOMATION_DYNAMIC_IMAGE) {
 		log_msg(LOG_LEVEL_NOTICE,"[CLEAR_AUTOMATION_DYNAMIC_IMAGE]");
-		ge_rs232_status_t status = ge_rs232_ready_to_send(interface);
-		if(status != GE_RS232_STATUS_WAIT) {
-			ge_rs232_status_t status = dynamic_data_refresh(interface);
-		} else {
-			log_msg(LOG_LEVEL_WARNING,"Unable to send refresh, not ready.");
-		}
+		ge_rs232_status_t status = dynamic_data_refresh(&node->qinterface,NULL,NULL);
 		return 0;
 
 	} else if(data[0]==GE_RS232_PTA_PANEL_TYPE) {
@@ -1379,10 +1431,10 @@ smcp_ge_system_node_init(
 	), bail);
 
 	ge_rs232_t interface = ge_rs232_init(&self->interface);
+	struct ge_queue_s *qinterface = ge_queue_init(&self->qinterface,interface);
 	interface->received_message = (void*)&received_message;
 	interface->send_byte = &send_byte;
 	interface->context = (void*)self;
-
 
 	if(SMCP_STATUS_OK!=reset_serial(self,"/dev/ttyUSB0")) {
 		if(SMCP_STATUS_OK!=reset_serial(self,"/dev/ttyUSB1")) {
@@ -1396,7 +1448,8 @@ smcp_ge_system_node_init(
 	// Make sure we at least have the first partition set up.
 	ge_get_partition(self,1);
 
-	refresh_equipment_list(interface);
+	dynamic_data_refresh(qinterface,NULL,NULL);
+	refresh_equipment_list(qinterface,NULL,NULL);
 
 bail:
 	return self;
@@ -1462,13 +1515,15 @@ smcp_ge_system_node_process(ge_system_node_t self) {
 		status = ge_rs232_receive_byte(&self->interface,byte);
 	}
 
+	ge_queue_update(&self->qinterface);
+
 	if(
 		ge_rs232_ready_to_send(&self->interface)==GE_RS232_STATUS_TIMEOUT
 	) {
 		if(self->interface.output_attempt_count<3) {
 			ge_rs232_resend_last_message(&self->interface);
 		} else if(self->interface.got_response) {
-			self->interface.got_response(self->interface.context,&self->interface,false);
+			self->interface.got_response(self->interface.response_context,&self->interface,false);
 		}
 	}
 

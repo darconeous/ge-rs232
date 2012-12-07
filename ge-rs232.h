@@ -29,11 +29,42 @@ struct ge_rs232_s {
 	uint8_t output_attempt_count;
 	ge_rs232_status_t (*received_message)(void* context, const uint8_t* data, uint8_t len,struct ge_rs232_s* instance);
 	ge_rs232_status_t (*send_byte)(void* context, uint8_t byte,struct ge_rs232_s* instance);
+	void* response_context;
 	void (*got_response)(void* context,struct ge_rs232_s* instance, bool didAck);
 };
 
 typedef struct ge_rs232_s* ge_rs232_t;
 
+#ifndef GE_QUEUE_MAX_MESSAGES
+#define GE_QUEUE_MAX_MESSAGES		(8)
+#endif
+
+struct ge_message_s {
+	uint8_t msg[GE_RS232_MAX_MESSAGE_SIZE];
+	uint8_t msg_len;
+	uint8_t attempts;
+	void* context;
+	void (*finished)(void* context,ge_rs232_status_t status);
+};
+
+struct ge_queue_s {
+	ge_rs232_t interface;
+	struct ge_message_s queue[GE_QUEUE_MAX_MESSAGES];
+	uint8_t head, tail;
+};
+typedef struct ge_queue_s *ge_queue_t;
+
+ge_queue_t ge_queue_init(ge_queue_t qinterface,ge_rs232_t interface);
+
+ge_rs232_status_t ge_queue_update(ge_queue_t qinterface);
+
+ge_rs232_status_t ge_queue_message(
+	ge_queue_t qinterface,
+	const uint8_t* data,
+	uint8_t len,
+	void (*finished)(void* context,ge_rs232_status_t status),
+	void* context
+);
 
 #define GE_RS232_STATUS_OK					(0)
 #define GE_RS232_STATUS_ERROR				(-1)
@@ -44,6 +75,7 @@ typedef struct ge_rs232_s* ge_rs232_t;
 #define GE_RS232_STATUS_JUNK				(-6)
 #define GE_RS232_STATUS_BAD_CHECKSUM		(-7)
 #define GE_RS232_STATUS_MESSAGE_TOO_SMALL	(-8)
+#define GE_RS232_STATUS_QUEUE_FULL			(-9)
 
 #define GE_RS232_ZONE_STATUS_TRIPPED		(1<<0)
 #define GE_RS232_ZONE_STATUS_FAULT			(1<<1)

@@ -1,5 +1,6 @@
 #include "ge-rs232.h"
 #include <strings.h>
+#include <string.h>
 #include <stdio.h>
 
 const char *ge_rs232_text_token_lookup[256] = {
@@ -286,11 +287,11 @@ ge_rs232_receive_byte(ge_rs232_t self, uint8_t byte) {
 	} else if(byte == GE_RS232_ACK && !self->last_response) {
 		self->last_response = GE_RS232_ACK;
 		if(self->got_response)
-			self->got_response(self->context,self,true);
+			self->got_response(self->response_context,self,true);
 	} else if(byte == GE_RS232_NAK && !self->last_response) {
 		self->last_response = GE_RS232_NAK;
 		if(self->got_response)
-			self->got_response(self->context,self,false);
+			self->got_response(self->response_context,self,false);
 	} else if(self->reading_message) {
 		if(!self->nibble_buffer) {
 			self->nibble_buffer = byte;
@@ -410,4 +411,110 @@ bail:
 	return ret;
 }
 
+/*
+#ifndef GE_QUEUE_MAX_MESSAGES		(8)
+
+struct ge_message_s {
+	uint8_t msg[GE_RS232_MAX_MESSAGE_SIZE];
+	uint8_t msg_len;
+	void* context;
+	void (*finished)(void* context,ge_rs232_status_t status);
+};
+
+struct ge_queue_s {
+	ge_rs232_t interface;
+	struct ge_message_s queue[GE_QUEUE_MAX_MESSAGES];
+	uint8_t head, tail;
+};
+typedef struct ge_queue_s *ge_queue_t;
+*/
+
+ge_queue_t
+ge_queue_init(ge_queue_t qinterface, ge_rs232_t interface) {
+	memset((void*)qinterface,sizeof(*qinterface),0);
+	qinterface->interface = interface;
+	return qinterface;
+}
+
+static void
+ge_queue_got_response(void* context,struct ge_rs232_s* instance, bool didAck) {
+	ge_queue_t qinterface = context;
+	ge_rs232_status_t status = ge_rs232_ready_to_send(qinterface->interface);
+	struct ge_message_s *message = &qinterface->queue[qinterface->head];
+
+	if(status==GE_RS232_STATUS_OK || message->attempts>=3) {
+		if(NULL!=message->finished)
+			message->finished(
+				message->context,
+				status
+			);
+		qinterface->head = (qinterface->head+1)&(GE_QUEUE_MAX_MESSAGES-1);
+	}
+
+	qinterface->interface->got_response = NULL;
+	qinterface->interface->response_context = NULL;
+
+}
+
+ge_rs232_status_t
+ge_queue_update(ge_queue_t qinterface) {
+	ge_rs232_status_t status = 0;
+    struct ge_message_s *message;
+
+	if(qinterface->head==qinterface->tail)
+		goto bail;	// Empty.
+
+	if(ge_rs232_ready_to_send(qinterface->interface)==GE_RS232_STATUS_WAIT)
+		goto bail;	// Busy.
+
+	if(	ge_rs232_ready_to_send(qinterface->interface) == GE_RS232_STATUS_TIMEOUT
+		&& qinterface->interface->got_response == &ge_queue_got_response
+	) {
+		(*qinterface->interface->got_response)(qinterface->interface->response_context,qinterface->interface,0);
+	}
+
+	// RELEASE THE KRAKEN!
+    message = &qinterface->queue[qinterface->head];
+	message->attempts++;
+
+	qinterface->interface->got_response = &ge_queue_got_response;
+	qinterface->interface->response_context = qinterface;
+
+	status = ge_rs232_send_message(qinterface->interface, message->msg, message->msg_len);
+
+bail:
+	return status;
+}
+
+ge_rs232_status_t ge_queue_message(
+	ge_queue_t qinterface,
+	const uint8_t* data,
+	uint8_t len,
+	void (*finished)(void* context,ge_rs232_status_t status),
+	void* context
+) {
+	ge_rs232_status_t status = 0;
+	struct ge_message_s *message = &qinterface->queue[qinterface->tail];
+
+	// Stuff is added to the tail and removed from the head.
+	// Tail is always empty.
+
+	if((qinterface->tail-qinterface->head)&(GE_QUEUE_MAX_MESSAGES-1) == (GE_QUEUE_MAX_MESSAGES-1)) {
+		// Queue is full!
+		status = GE_RS232_STATUS_QUEUE_FULL;
+	}
+
+	message->context = context;
+	message->finished = finished;
+	memcpy(message->msg,data,len);
+	message->msg_len = len;
+	message->attempts = 0;
+
+	qinterface->tail = (qinterface->tail+1)&(GE_QUEUE_MAX_MESSAGES-1);
+
+	ge_queue_update(qinterface);
+
+bail:
+	return status;
+}
 

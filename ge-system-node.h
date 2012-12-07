@@ -90,6 +90,7 @@ struct ge_partition_s {
 struct ge_system_node_s {
 	struct smcp_node_s node;
 
+	struct ge_queue_s qinterface;
 	struct ge_rs232_s interface;
 
 	FILE* serial_in;
