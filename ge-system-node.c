@@ -1072,10 +1072,11 @@ received_message(struct ge_system_node_s *node, const uint8_t* data, uint8_t len
 				int partitioni = data[2];
 				struct ge_partition_s* partition = ge_get_partition(node,partitioni);
 				if(partition) {
+					char arm_level_changed[] = { 'v','=','0'+data[6],0 };
 					partition->arming_level = data[6];
 					partition->armed_by = (data[4]<<8)+(data[5]);
 					partition->arm_date = time(NULL);
-					smcp_variable_node_did_change(&partition->node,PATH_ARM_LEVEL,NULL);
+					smcp_variable_node_did_change(&partition->node,PATH_ARM_LEVEL,arm_level_changed);
 					smcp_variable_node_did_change(&partition->node,PATH_ARM_DATE,NULL);
 					smcp_variable_node_did_change(&partition->node,PATH_ARMED_BY,NULL);
 					if(partition->arming_level == 1) {
