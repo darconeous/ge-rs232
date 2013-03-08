@@ -159,56 +159,6 @@ static panel_response_context* new_panel_response_context() {
 	return ret;
 }
 
-const char* ge_text_to_ascii_one_line(const char* bytes, uint8_t len) {
-	static char ret[1024];
-	ret[0] = 0;
-	// TODO: Optimize!
-	while(len--) {
-		const char* str = ge_rs232_text_token_lookup[*bytes++];
-		if(str) {
-			if(str[0]=='\n') {
-				if(len)
-					strlcat(ret,isspace(ret[strlen(ret)-1])?"| ":" | ",sizeof(ret));
-			} else if(str[0]=='\b') {
-				// Backspace
-				if(ret[0])
-					ret[strlen(ret)-1] = 0;
-			} else {
-				strlcat(ret,str,sizeof(ret));
-			}
-		} else {
-			strlcat(ret,"?",sizeof(ret));
-		}
-	}
-	// Remove trailing whitespace.
-	for(len=strlen(ret);len && isspace(ret[len-1]);len--)
-		ret[len-1] = 0;
-	return ret;
-}
-
-const char* ge_text_to_ascii(const char* bytes, uint8_t len) {
-	static char ret[1024];
-	ret[0] = 0;
-	// TODO: Optimize!
-	while(len--) {
-		const char* str = ge_rs232_text_token_lookup[*bytes++];
-		if(str) {
-			if(str[0]=='\b') {
-				// Backspace
-				if(ret[0])
-					ret[strlen(ret)-1] = 0;
-			} else {
-				strlcat(ret,str,sizeof(ret));
-			}
-		} else {
-			strlcat(ret,"?",sizeof(ret));
-		}
-	}
-	// Remove trailing whitespace.
-	for(len=strlen(ret);len && isspace(ret[len-1]);len--)
-		ret[len-1] = 0;
-	return ret;
-}
 
 static const uint8_t refresh_equipment_msg[] = { GE_RS232_ATP_EQUIP_LIST_REQUEST };
 static const uint8_t dynamic_data_refresh_msg[] = { GE_RS232_ATP_DYNAMIC_DATA_REFRESH };

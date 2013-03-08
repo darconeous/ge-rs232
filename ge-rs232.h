@@ -12,59 +12,10 @@
 
 #define GE_RS232_MAX_MESSAGE_SIZE	(56)
 
-typedef int ge_rs232_status_t;
-
-struct ge_rs232_s {
-	void* context;
-	bool reading_message;
-	uint8_t current_byte;
-	uint8_t message_len;
-	uint8_t nibble_buffer;
-	uint8_t last_response;
-	uint8_t buffer_sum;
-	time_t last_sent;
-	uint8_t buffer[GE_RS232_MAX_MESSAGE_SIZE];
-	uint8_t output_buffer[GE_RS232_MAX_MESSAGE_SIZE];
-	uint8_t output_buffer_len;
-	uint8_t output_attempt_count;
-	ge_rs232_status_t (*received_message)(void* context, const uint8_t* data, uint8_t len,struct ge_rs232_s* instance);
-	ge_rs232_status_t (*send_byte)(void* context, uint8_t byte,struct ge_rs232_s* instance);
-	void* response_context;
-	void (*got_response)(void* context,struct ge_rs232_s* instance, bool didAck);
-};
-
-typedef struct ge_rs232_s* ge_rs232_t;
-
 #ifndef GE_QUEUE_MAX_MESSAGES
 #define GE_QUEUE_MAX_MESSAGES		(8)
 #endif
 
-struct ge_message_s {
-	uint8_t msg[GE_RS232_MAX_MESSAGE_SIZE];
-	uint8_t msg_len;
-	uint8_t attempts;
-	void* context;
-	void (*finished)(void* context,ge_rs232_status_t status);
-};
-
-struct ge_queue_s {
-	ge_rs232_t interface;
-	struct ge_message_s queue[GE_QUEUE_MAX_MESSAGES];
-	uint8_t head, tail;
-};
-typedef struct ge_queue_s *ge_queue_t;
-
-ge_queue_t ge_queue_init(ge_queue_t qinterface,ge_rs232_t interface);
-
-ge_rs232_status_t ge_queue_update(ge_queue_t qinterface);
-
-ge_rs232_status_t ge_queue_message(
-	ge_queue_t qinterface,
-	const uint8_t* data,
-	uint8_t len,
-	void (*finished)(void* context,ge_rs232_status_t status),
-	void* context
-);
 
 #define GE_RS232_STATUS_OK					(0)
 #define GE_RS232_STATUS_ERROR				(-1)
@@ -164,7 +115,30 @@ ge_rs232_status_t ge_queue_message(
 #define GE_RS232_ALARM_GENERAL_TYPE_SYSTEM_CONFIG_CHANGE			(17)
 #define GE_RS232_ALARM_GENERAL_TYPE_SYSTEM_EVENT			(18)
 
-extern const char* ge_rs232_text_token_lookup[256];
+#pragma mark - Primary interface
+
+typedef int ge_rs232_status_t;
+
+struct ge_rs232_s {
+	void* context;
+	bool reading_message;
+	uint8_t current_byte;
+	uint8_t message_len;
+	uint8_t nibble_buffer;
+	uint8_t last_response;
+	uint8_t buffer_sum;
+	time_t last_sent;
+	uint8_t buffer[GE_RS232_MAX_MESSAGE_SIZE];
+	uint8_t output_buffer[GE_RS232_MAX_MESSAGE_SIZE];
+	uint8_t output_buffer_len;
+	uint8_t output_attempt_count;
+	ge_rs232_status_t (*received_message)(void* context, const uint8_t* data, uint8_t len,struct ge_rs232_s* instance);
+	ge_rs232_status_t (*send_byte)(void* context, uint8_t byte,struct ge_rs232_s* instance);
+	void* response_context;
+	void (*got_response)(void* context,struct ge_rs232_s* instance, bool didAck);
+};
+
+typedef struct ge_rs232_s* ge_rs232_t;
 
 ge_rs232_t ge_rs232_init(ge_rs232_t interface);
 ge_rs232_status_t ge_rs232_receive_byte(ge_rs232_t interface, uint8_t byte);
@@ -172,6 +146,41 @@ ge_rs232_status_t ge_rs232_ready_to_send(ge_rs232_t interface);
 ge_rs232_status_t ge_rs232_send_message(ge_rs232_t interface, const uint8_t* data, uint8_t len);
 ge_rs232_status_t ge_rs232_resend_last_message(ge_rs232_t self);
 
+#pragma mark - Queue Interface
+
+struct ge_message_s {
+	uint8_t msg[GE_RS232_MAX_MESSAGE_SIZE];
+	uint8_t msg_len;
+	uint8_t attempts;
+	void* context;
+	void (*finished)(void* context,ge_rs232_status_t status);
+};
+
+struct ge_queue_s {
+	ge_rs232_t interface;
+	struct ge_message_s queue[GE_QUEUE_MAX_MESSAGES];
+	uint8_t head, tail;
+};
+typedef struct ge_queue_s *ge_queue_t;
+
+ge_queue_t ge_queue_init(ge_queue_t qinterface,ge_rs232_t interface);
+
+ge_rs232_status_t ge_queue_update(ge_queue_t qinterface);
+
+ge_rs232_status_t ge_queue_message(
+	ge_queue_t qinterface,
+	const uint8_t* data,
+	uint8_t len,
+	void (*finished)(void* context,ge_rs232_status_t status),
+	void* context
+);
+
+#pragma mark - Text conversion
+
+extern const char* ge_rs232_text_token_lookup[256];
+
+const char* ge_text_to_ascii_one_line(const uint8_t * bytes, uint8_t len);
+const char* ge_text_to_ascii(const uint8_t * bytes, uint8_t len);
 
 
 #endif
