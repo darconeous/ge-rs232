@@ -320,9 +320,9 @@ const char* ge_user_to_cstr(char* dest, int user) {
 		dest = static_string;
 
 	if(user>=230 && user<=237) {
-		snprintf(dest,sizeof(static_string),"P%d-MASTER-CODE");
+		snprintf(dest,sizeof(static_string),"P%d-MASTER-CODE",user-230);
 	} else if(user>=238 && user<=245) {
-		snprintf(dest,sizeof(static_string),"P%d-DURESS-CODE");
+		snprintf(dest,sizeof(static_string),"P%d-DURESS-CODE",user-238);
 	} else if(user==246) {
 		strncpy(dest,"SYSTEM-CODE",sizeof(static_string));
 	} else if(user==247) {
