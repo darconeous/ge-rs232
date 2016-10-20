@@ -7,4 +7,4 @@ The interface for parsing and sending packets is in `ge-rs232.c` and `ge-rs232.h
 
 ## Links ##
 
- * [Home Automation Protocol Document](https://docs.google.com/file/d/0B2YZbA-Smf2WMW9udFZJUVZ4YTg/view)
+ * [Home Automation Protocol Document](https://docs.google.com/file/d/0B2YZbA-Smf2WMW9udFZJUVZ4YTg/view) ([alt link](https://web.archive.org/web/20150616041642/http://www.interlogix.com/_/assets/library/Automation%20Module%20Protocol.pdf))
