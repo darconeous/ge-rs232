@@ -16,6 +16,52 @@ static char int_to_hex_digit(uint8_t x) {
 }
 #endif
 
+#if !HAVE_STRLCPY && !defined(strlcpy)
+#define strlcpy(...) ___smcp_strlcpy(__VA_ARGS__)
+size_t ___smcp_strlcpy(char* dest, const char* src, size_t len);
+#endif
+
+#if !HAVE_STRLCAT && !defined(strlcat)
+#define strlcat(...) ___smcp_strlcat(__VA_ARGS__)
+size_t ___smcp_strlcat(char* dest, const char* src, size_t len);
+#endif
+
+#ifndef MIN
+// I know it sucks, but whatever.
+#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+#endif
+
+#if !HAVE_STRLCAT
+size_t
+___smcp_strlcat(char *dst, const char *src, size_t siz)
+{
+	size_t dlen = strlen(dst);
+
+	if (dlen < siz - 1) {
+		return (dlen + strlcpy(dst + dlen, src, siz-dlen));
+	}
+
+	return dlen + strlen(src);
+}
+#endif
+
+#if !HAVE_STRLCPY
+size_t
+___smcp_strlcpy(char *dst, const char *src, size_t siz)
+{
+	size_t n;
+	size_t slen = strlen(src);
+
+	if (siz) {
+		if ((n = MIN(slen, siz - 1))) {
+			memcpy(dst, src, n);
+		}
+		dst[n] = '\0';
+	}
+	return slen;
+}
+#endif
+
 static char
 hex_digit_to_int(char c) {
 	switch(c) {
@@ -570,4 +616,40 @@ ge_text_to_ascii(const uint8_t * bytes, uint8_t len) {
 	for(len=strlen(ret);len && isspace(ret[len-1]);len--)
 		ret[len-1] = 0;
 	return ret;
+}
+
+const char* ge_user_to_cstr(char* dest, int user) {
+	static char static_string[48];
+
+	if (dest == NULL) {
+		dest = static_string;
+	}
+
+	if (user >= 230 && user <= 237) {
+		snprintf(dest, sizeof(static_string), "P%d-MASTER-CODE", user - 230);
+	} else if (user >= 238 && user <= 245) {
+		snprintf(dest, sizeof(static_string), "P%d-DURESS-CODE", user - 238);
+	} else if (user == 246) {
+		strlcpy(dest, "SYSTEM-CODE", sizeof(static_string));
+	} else if (user == 247) {
+		strlcpy(dest, "INSTALLER", sizeof(static_string));
+	} else if (user == 248) {
+		strlcpy(dest, "DEALER", sizeof(static_string));
+	} else if (user == 249) {
+		strlcpy(dest, "AVM-CODE", sizeof(static_string));
+	} else if (user == 250) {
+		strlcpy(dest, "QUICK-ARM", sizeof(static_string));
+	} else if (user == 251) {
+		strlcpy(dest, "KEY-SWITCH", sizeof(static_string));
+	} else if (user == 252) {
+		strlcpy(dest, "SYSTEM", sizeof(static_string));
+	} else if (user == 255) {
+		strlcpy(dest, "AUTOMATION", sizeof(static_string));
+	} else if (user == 65535) {
+		strlcpy(dest, "SYSTEM/KEY-SWITCH", sizeof(static_string));
+	} else {
+		snprintf(dest, sizeof(static_string), "USER-%d", user);
+	}
+
+	return dest;
 }

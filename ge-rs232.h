@@ -181,6 +181,7 @@ extern const char* ge_rs232_text_token_lookup[256];
 
 const char* ge_text_to_ascii_one_line(const uint8_t * bytes, uint8_t len);
 const char* ge_text_to_ascii(const uint8_t * bytes, uint8_t len);
+const char* ge_user_to_cstr(char* dest, int user);
 
 
 #endif

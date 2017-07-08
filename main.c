@@ -37,6 +37,7 @@ void log_msg(int level,const char* format, ...) {
 	static bool did_start_syslog;
 	if(!did_start_syslog) {
 		openlog("ge-rs232",LOG_PERROR|LOG_CONS,LOG_DAEMON);
+		setlogmask(setlogmask(0) & LOG_UPTO(current_log_level));
 		did_start_syslog = true;
 	}
 	vsyslog(level,format,ap);
@@ -206,10 +207,10 @@ received_message(interface_context_t context, const uint8_t* data, uint8_t len,s
 		switch(data[1]) {
 			case GE_RS232_PTA_SUBCMD_LEVEL:
 				log_msg(LOG_LEVEL_NOTICE,
-					"[ARMING_LEVEL] PN:%d AREA:%d USER:%d LEVEL:%d",
+					"[ARMING_LEVEL] PN:%d AREA:%d USER:%s LEVEL:%d",
 					data[2],
 					data[3],
-					(data[4]<<8)+data[5],
+					ge_user_to_cstr(NULL,(data[4]<<8)+data[5]),
 					data[6]
 				);
 				return 0;
@@ -374,6 +375,50 @@ received_message(interface_context_t context, const uint8_t* data, uint8_t len,s
 					data[6]
 				);
 				break;
+		}
+	} else if(data[0]==GE_RS232_PTA_EQUIP_LIST_USER_DATA) {
+		uint16_t user = (data[1]<<8)+data[2];
+		char code_backing[5];
+		char* code = code_backing;
+
+/*
+		if(user == 246) {
+			code = node->system_code;
+		} else if(user == 247) {
+			code = node->installer_code;
+		} else if(user>=230 && user<=237) {
+			// Partition master code
+		} else if(user>=238 && user<=245) {
+			// Partition duress code
+		}
+*/
+
+		if(code) {
+			code[0] = (data[4]>>4)+'0';
+			code[1] = (data[4]&0xF)+'0';
+			code[2] = (data[5]>>4)+'0';
+			code[3] = (data[5]&0xF)+'0';
+			code[4] = 0;
+
+			// Check for the zero code, which is invalid.
+			if(strcmp(code,"0000")==0)
+				code[0] = 0;
+
+#if DEBUG
+			log_msg(LOG_LEVEL_DEBUG,
+				"[EQUIP_LIST_USER_DATA] USER:\"%s\"(%d) CODE=\"%s\"",
+				ge_user_to_cstr(NULL,user),
+				user,
+				code
+			);
+#else
+			log_msg(LOG_LEVEL_INFO,
+				"[EQUIP_LIST_USER_DATA] USER:\"%s\"(%d) CODE=\"????\"",
+				ge_user_to_cstr(NULL,user),
+				user
+			);
+#endif
+		    len = 0;
 		}
 	}
 

@@ -264,39 +264,6 @@ ge_rs232_status_t send_keypress(ge_queue_t qinterface,uint8_t partition, uint8_t
 		PATH_COUNT,
 	};
 
-const char* ge_user_to_cstr(char* dest, int user) {
-	static char static_string[128];
-	if(!dest)
-		dest = static_string;
-
-	if(user>=230 && user<=237) {
-		snprintf(dest,sizeof(static_string),"P%d-MASTER-CODE",user-230);
-	} else if(user>=238 && user<=245) {
-		snprintf(dest,sizeof(static_string),"P%d-DURESS-CODE",user-238);
-	} else if(user==246) {
-		strncpy(dest,"SYSTEM-CODE",sizeof(static_string));
-	} else if(user==247) {
-		strncpy(dest,"INSTALLER",sizeof(static_string));
-	} else if(user==248) {
-		strncpy(dest,"DEALER",sizeof(static_string));
-	} else if(user==249) {
-		strncpy(dest,"AVM-CODE",sizeof(static_string));
-	} else if(user==250) {
-		strncpy(dest,"QUICK-ARM",sizeof(static_string));
-	} else if(user==251) {
-		strncpy(dest,"KEY-SWITCH",sizeof(static_string));
-	} else if(user==252) {
-		strncpy(dest,"SYSTEM",sizeof(static_string));
-	} else if(user==255) {
-		strncpy(dest,"AUTOMATION",sizeof(static_string));
-	} else if(user==65535) {
-		strncpy(dest,"SYSTEM/KEY-SWITCH",sizeof(static_string));
-	} else {
-		snprintf(dest,sizeof(static_string),"USER-%d",user);
-	}
-	return dest;
-}
-
 
 static smcp_status_t
 partition_node_var_func(
