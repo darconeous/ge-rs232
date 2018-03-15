@@ -1,3 +1,11 @@
+# THIS PROJECT IS ARCHIVED #
+
+Check out [Concordd](https://github.com/darconeous/concordd) for the MUCH more useful successor...!
+
+
+
+--------------------------
+
 GE Concord Home Automation Interface
 ====================================
 
